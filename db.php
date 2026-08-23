@@ -25,12 +25,29 @@ try {
         full_name TEXT NOT NULL,
         course TEXT NOT NULL,
         year TEXT NOT NULL,
+        school_year TEXT NOT NULL DEFAULT \'2026-2027\',
         status TEXT NOT NULL,
+        parent_phone TEXT NOT NULL DEFAULT \'\',
         is_archived INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )');
     try {
         $db->exec('ALTER TABLE students ADD COLUMN archived_school_year TEXT');
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
+    try {
+        $db->exec('ALTER TABLE students ADD COLUMN face_image_path TEXT');
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
+    try {
+        $db->exec("ALTER TABLE students ADD COLUMN parent_phone TEXT NOT NULL DEFAULT ''");
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
+    try {
+        $db->exec("ALTER TABLE students ADD COLUMN school_year TEXT NOT NULL DEFAULT '2026-2027'");
     } catch (PDOException $error) {
         // The column already exists on an initialized database.
     }
@@ -87,10 +104,11 @@ try {
 
     $attendanceCount = (int) $db->query('SELECT COUNT(*) FROM attendance')->fetchColumn();
     if ($attendanceCount === 0) {
+        $today = date('F j, Y');
         $attendance = [
-            ['2026-001', 'John Cruz', 'BSCS', 'August 4, 2026', 'Programming 1', '7:58 AM', '10:00 AM', 'Present'],
-            ['2026-002', 'Maria Santos', 'BSIT', 'August 4, 2026', 'Database', '8:15 AM', '10:05 AM', 'Late'],
-            ['2026-003', 'Peter Ramos', 'BSOA', 'August 4, 2026', 'Networking', '--', '--', 'Absent'],
+            ['2026-001', 'John Cruz', 'BSCS', $today, 'Programming 1', '7:58 AM', '10:00 AM', 'Present'],
+            ['2026-002', 'Maria Santos', 'BSIT', $today, 'Database', '8:15 AM', '10:05 AM', 'Late'],
+            ['2026-003', 'Peter Ramos', 'BSOA', $today, 'Networking', '--', '--', 'Absent'],
         ];
         $statement = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
         foreach ($attendance as $record) $statement->execute($record);

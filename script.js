@@ -1,6 +1,11 @@
 const REMEMBER_KEY = 'drlcefiRememberedLogin';
 let dashboardData = { students: [], schedules: [], attendance: [], audit: [], notificationSettings: {} };
 
+function getSurname(name) {
+    const parts = String(name).trim().split(/\s+/);
+    return parts.length > 1 ? parts[parts.length - 1] : parts[0];
+}
+
 function setAuthMessage(message, type) {
     const messageElement = document.getElementById('authMessage');
     if (messageElement) {
@@ -39,13 +44,14 @@ async function loadDashboardData() {
     const studentsBody = document.querySelector('#studentTable tbody');
     if (studentsBody) {
         const sortedStudents = dashboardData.students.slice().sort(function (firstStudent, secondStudent) {
-            return String(firstStudent.full_name).localeCompare(String(secondStudent.full_name));
+            const surnameOrder = getSurname(firstStudent.full_name).localeCompare(getSurname(secondStudent.full_name), undefined, { sensitivity: 'base' });
+            return surnameOrder || String(firstStudent.full_name).localeCompare(String(secondStudent.full_name), undefined, { sensitivity: 'base' });
         });
         studentsBody.innerHTML = sortedStudents.map(function (student) {
             const archived = Number(student.is_archived) === 1;
             return `<tr data-student-status="${archived ? 'archived' : 'active'}">
                 <td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td>
-                <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td>
+                <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${escapeHtml(student.school_year || 'Unassigned')}</td>
                 <td>${escapeHtml(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td></tr>`;
         }).join('');
         filterStudents();
@@ -54,9 +60,10 @@ async function loadDashboardData() {
     const attendanceBody = document.getElementById('attendanceTableBody');
     if (attendanceBody) {
         attendanceBody.innerHTML = dashboardData.attendance.map(function (record) {
-            return `<tr data-course="${escapeHtml(record.course)}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${escapeHtml(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
+            return `<tr data-course="${escapeHtml(record.course)}" data-attendance-date="${attendanceDateKey(record.attendance_date)}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${escapeHtml(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
         }).join('');
         getAttendanceRows().forEach(function (row) { row.dataset.matchesFilter = 'true'; });
+        renderAttendanceDateControls();
         renderAttendancePage();
     }
     const scheduleBody = document.getElementById('scheduleTableBody');
@@ -67,6 +74,7 @@ async function loadDashboardData() {
         applyScheduleFilters();
     }
     renderAuditLog();
+    renderAttendanceHistory();
     updateOverviewStats();
     loadNotificationSettingsFromData();
     applyRolePermissions(document.getElementById('appShell').dataset.role || 'Administrator');
@@ -143,7 +151,10 @@ async function initializeAuth() {
 
     document.getElementById('signupForm').addEventListener('submit', async function (event) {
         event.preventDefault();
-        const name = document.getElementById('signupName').value.trim();
+        const firstName = document.getElementById('signupFirstName').value.trim();
+        const middleName = document.getElementById('signupMiddleName').value.trim();
+        const lastName = document.getElementById('signupLastName').value.trim();
+        const name = [firstName, middleName, lastName].filter(Boolean).join(' ');
         const email = document.getElementById('signupEmail').value.trim().toLowerCase();
         const password = document.getElementById('signupPassword').value;
         try {
@@ -235,12 +246,79 @@ document.querySelectorAll('.nav-link').forEach(function (link) {
     });
 });
 
+function attendanceDateKey(value) {
+    const date = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+function attendanceDateLabel(dateKey) {
+    const parts = dateKey.split('-').map(Number);
+    return new Date(parts[0], parts[1] - 1, parts[2]).toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
 const attendanceState = {
+    selectedDate: attendanceDateKey(new Date()),
     sortKey: '',
     sortDirection: 1,
     page: 1,
     pageSize: 10
 };
+
+function renderAttendanceDateControls() {
+    const todayKey = attendanceDateKey(new Date());
+    const label = document.getElementById('attendanceDateLabel');
+    const nextButton = document.querySelector('.attendance-date-nav .date-nav-button:nth-of-type(2)');
+    const summary = document.getElementById('attendanceDateSummary');
+    const rows = getAttendanceRows().filter(function (row) { return row.dataset.attendanceDate === attendanceState.selectedDate; });
+    const counts = { Present: 0, Late: 0, Absent: 0 };
+    rows.forEach(function (row) {
+        const status = row.cells[6].textContent.trim();
+        counts[status] = (counts[status] || 0) + 1;
+    });
+    if (label) label.textContent = attendanceState.selectedDate === todayKey ? 'Today' : attendanceDateLabel(attendanceState.selectedDate);
+    if (nextButton) nextButton.disabled = attendanceState.selectedDate >= todayKey;
+    if (summary) summary.textContent = `${counts.Present} Present    ${counts.Late} Late    ${counts.Absent} Absent`;
+}
+
+function selectAttendanceDate(dateKey) {
+    const todayKey = attendanceDateKey(new Date());
+    attendanceState.selectedDate = dateKey > todayKey ? todayKey : dateKey;
+    renderAttendanceDateControls();
+    applyAttendanceFilters();
+}
+
+function changeAttendanceDate(change) {
+    const parts = attendanceState.selectedDate.split('-').map(Number);
+    const date = new Date(parts[0], parts[1] - 1, parts[2]);
+    date.setDate(date.getDate() + change);
+    selectAttendanceDate(attendanceDateKey(date));
+}
+
+function goToAttendanceToday() {
+    selectAttendanceDate(attendanceDateKey(new Date()));
+}
+
+function renderAttendanceHistory() {
+    const list = document.getElementById('attendanceHistoryList');
+    const empty = document.getElementById('attendanceHistoryEmpty');
+    if (!list) return;
+    const todayKey = attendanceDateKey(new Date());
+    const grouped = {};
+    dashboardData.attendance.forEach(function (record) {
+        const dateKey = attendanceDateKey(record.attendance_date);
+        if (!dateKey || dateKey >= todayKey) return;
+        if (!grouped[dateKey]) grouped[dateKey] = { total: 0, Present: 0, Late: 0, Absent: 0 };
+        grouped[dateKey].total += 1;
+        grouped[dateKey][record.status] = (grouped[dateKey][record.status] || 0) + 1;
+    });
+    const dates = Object.keys(grouped).sort().reverse();
+    list.innerHTML = dates.map(function (dateKey) {
+        const summary = grouped[dateKey];
+        return `<div class="attendance-history-row"><div><strong>${attendanceDateLabel(dateKey)}</strong><span>${summary.total} records • ${summary.Present} present • ${summary.Absent} absent</span></div><button class="menu-item" type="button" onclick="selectAttendanceDate('${dateKey}'); document.querySelector('[data-view=attendance]').click()">View</button></div>`;
+    }).join('');
+    if (empty) empty.hidden = dates.length > 0;
+}
 
 function getAttendanceRows() {
     const tableBody = document.getElementById('attendanceTableBody');
@@ -254,14 +332,13 @@ function getAttendanceValue(row, key) {
 
 function applyAttendanceFilters() {
     const search = document.getElementById('attendanceSearch').value.trim().toLowerCase();
-    const date = document.getElementById('attendanceDateFilter').value;
     const subject = document.getElementById('attendanceSubjectFilter').value;
     const status = document.getElementById('attendanceStatusFilter').value;
     const course = document.getElementById('attendanceCourseFilter').value;
 
     getAttendanceRows().forEach(function (row) {
         const matches = (!search || getAttendanceValue(row, 'name').includes(search))
-            && (!date || row.cells[2].textContent.trim() === date)
+            && row.dataset.attendanceDate === attendanceState.selectedDate
             && (!subject || row.cells[3].textContent.trim() === subject)
             && (!status || row.cells[6].textContent.trim() === status)
             && (!course || row.dataset.course === course);
@@ -274,15 +351,19 @@ function applyAttendanceFilters() {
 
 function resetAttendanceFilters() {
     document.getElementById('attendanceSearch').value = '';
-    document.getElementById('attendanceDateFilter').value = '';
     document.getElementById('attendanceSubjectFilter').value = '';
     document.getElementById('attendanceStatusFilter').value = '';
     document.getElementById('attendanceCourseFilter').value = '';
-    getAttendanceRows().forEach(function (row) { row.dataset.matchesFilter = 'true'; });
+    getAttendanceRows().forEach(function (row) {
+        row.dataset.attendanceDate = row.dataset.attendanceDate || attendanceDateKey(row.cells[2].textContent.trim());
+        row.dataset.matchesFilter = 'true';
+    });
     attendanceState.sortKey = '';
     attendanceState.sortDirection = 1;
     attendanceState.page = 1;
-    renderAttendancePage();
+    renderAttendanceDateControls();
+    renderAttendanceDateControls();
+    applyAttendanceFilters();
 }
 
 function sortAttendance(sortKey) {
@@ -365,15 +446,9 @@ function getStudentRows() {
 
 function filterStudents() {
     const search = document.getElementById('studentSearch').value.trim().toLowerCase();
-    const statusFilter = document.getElementById('studentStatusFilter').value;
-    const yearFilter = document.getElementById('studentYearFilter').value;
-    const courseFilter = document.getElementById('studentCourseFilter').value;
     getStudentRows().forEach(function (row) {
         const rowText = row.textContent.toLowerCase();
-        row.hidden = (search && !rowText.includes(search))
-            || (statusFilter !== 'all' && row.dataset.studentStatus !== statusFilter)
-            || (yearFilter && row.cells[3].textContent.trim() !== yearFilter)
-            || (courseFilter && row.cells[2].textContent.trim() !== courseFilter);
+        row.hidden = row.dataset.studentStatus === 'archived' || (search && !rowText.includes(search));
     });
 }
 
@@ -384,11 +459,15 @@ function sortStudents(sortKey) {
         studentState.sortKey = sortKey;
         studentState.sortDirection = 1;
     }
-    const columnMap = { id: 0, name: 1, course: 2, year: 3, status: 4 };
+    const columnMap = { id: 0, name: 1, course: 2, year: 3, schoolYear: 4, status: 5 };
     const body = document.querySelector('#studentTable tbody');
     getStudentRows().sort(function (firstRow, secondRow) {
         const first = firstRow.cells[columnMap[sortKey]].textContent.trim();
         const second = secondRow.cells[columnMap[sortKey]].textContent.trim();
+        if (sortKey === 'name') {
+            const surnameOrder = getSurname(first).localeCompare(getSurname(second), undefined, { sensitivity: 'base' });
+            if (surnameOrder) return surnameOrder * studentState.sortDirection;
+        }
         return first.localeCompare(second, undefined, { numeric: true }) * studentState.sortDirection;
     }).forEach(function (row) { body.appendChild(row); });
     filterStudents();
@@ -408,7 +487,8 @@ function openStudentProfile(button) {
             <dt>Name</dt><dd>${cells[1].textContent}</dd>
             <dt>Course</dt><dd>${cells[2].textContent}</dd>
             <dt>Year</dt><dd>${cells[3].textContent}</dd>
-            <dt>Status</dt><dd>${cells[4].textContent}</dd>
+            <dt>School Year</dt><dd>${cells[4].textContent}</dd>
+            <dt>Status</dt><dd>${cells[5].textContent}</dd>
             <dt>Record</dt><dd>${row.dataset.studentStatus === 'archived' ? 'Archived' : 'Active'}</dd>
         </dl>
         <p class="profile-note">Attendance history and guardian details can be connected when the data source is added.</p>
@@ -503,14 +583,10 @@ async function confirmArchiveSchoolYear() {
 
 function initializeStudentTools() {
     const search = document.getElementById('studentSearch');
-    const status = document.getElementById('studentStatusFilter');
-    if (!search || !status) {
+    if (!search) {
         return;
     }
     search.addEventListener('input', filterStudents);
-    status.addEventListener('change', filterStudents);
-    document.getElementById('studentYearFilter').addEventListener('change', filterStudents);
-    document.getElementById('studentCourseFilter').addEventListener('change', filterStudents);
     filterStudents();
 }
 
@@ -582,6 +658,9 @@ function searchHistory() {
     const query = input ? input.value.trim().toLowerCase() : '';
     document.querySelectorAll('#timeline .history-card').forEach(function (card) {
         card.hidden = Boolean(query) && !card.textContent.toLowerCase().includes(query);
+    });
+    document.querySelectorAll('#attendanceHistoryList .attendance-history-row').forEach(function (row) {
+        row.hidden = Boolean(query) && !row.textContent.toLowerCase().includes(query);
     });
 }
 
@@ -818,26 +897,80 @@ function clearForm() {
 
 function clearStudentForm() {
     document.getElementById('studentId').value = '';
-    document.getElementById('fullName').value = '';
+    document.getElementById('studentFirstName').value = '';
+    document.getElementById('studentMiddleName').value = '';
+    document.getElementById('studentLastName').value = '';
     document.getElementById('course').value = '';
+    document.getElementById('studentSchoolYearStart').value = '';
+    document.getElementById('studentSchoolYearEnd').value = '';
     document.getElementById('year').value = '';
     document.getElementById('status').value = '';
+    document.getElementById('facePhoto').value = '';
 }
+
+function readFacePhoto(file) {
+    return new Promise(function (resolve, reject) {
+        const reader = new FileReader();
+        reader.addEventListener('load', function () { resolve(reader.result); });
+        reader.addEventListener('error', function () { reject(new Error('Unable to read the face photo.')); });
+        reader.readAsDataURL(file);
+    });
+}
+
+function formatParentPhone(value) {
+    const digits = value.replace(/\D/g, '');
+    let localNumber = digits;
+    if (digits.startsWith('63')) {
+        localNumber = digits.slice(2);
+    } else if (digits.startsWith('0')) {
+        localNumber = digits.slice(1);
+    }
+    if (!localNumber.startsWith('9')) return value.replace(/[^0-9+\s().-]/g, '');
+    localNumber = localNumber.slice(0, 10);
+    const groups = [localNumber.slice(0, 3), localNumber.slice(3, 6), localNumber.slice(6, 10)].filter(Boolean);
+    return `+63 ${groups.join(' ')}`;
+}
+
+function initializeParentPhoneFormatter() {
+    const input = document.getElementById('parentPhone');
+    if (!input) return;
+    input.addEventListener('input', function () {
+        input.value = formatParentPhone(input.value);
+    });
+}
+
+initializeParentPhoneFormatter();
 
 async function addStudent() {
     const studentId = document.getElementById('studentId').value.trim();
-    const fullName = document.getElementById('fullName').value.trim();
+    const firstName = document.getElementById('studentFirstName').value.trim();
+    const middleName = document.getElementById('studentMiddleName').value.trim();
+    const lastName = document.getElementById('studentLastName').value.trim();
+    const fullName = [firstName, middleName, lastName].filter(Boolean).join(' ');
     const course = document.getElementById('course').value.trim();
+    const schoolYearStart = document.getElementById('studentSchoolYearStart').value.trim();
+    const schoolYearEnd = document.getElementById('studentSchoolYearEnd').value.trim();
+    const schoolYear = `${schoolYearStart}-${schoolYearEnd}`;
     const year = document.getElementById('year').value.trim();
     const status = document.getElementById('status').value.trim();
+    const facePhoto = document.getElementById('facePhoto').files[0];
 
-    if (!studentId || !fullName || !course || !year || !status) {
-        alert('Please complete all fields.');
+    if (!studentId || !firstName || !lastName || !course || !schoolYearStart || !schoolYearEnd || !year || !status || !facePhoto) {
+        alert('Please complete all required fields.');
+        return;
+    }
+    if (!/^\d{4}$/.test(schoolYearStart) || !/^\d{4}$/.test(schoolYearEnd) || Number(schoolYearEnd) !== Number(schoolYearStart) + 1) {
+        alert('Enter consecutive school years, such as 2026 and 2027.');
+        return;
+    }
+    if (facePhoto.size > 5 * 1024 * 1024) {
+        alert('The face photo must be 5 MB or smaller.');
         return;
     }
 
     try {
-        await requestApi('student', { method: 'POST', body: JSON.stringify({ studentId, fullName, course, year, status }) });
+        const facePhotoData = await readFacePhoto(facePhoto);
+        await requestApi('student', { method: 'POST', body: JSON.stringify({ studentId, fullName, course, schoolYear, year, status, facePhoto: facePhotoData }) });
         closeStudentModal();
         clearStudentForm();
         await loadDashboardData();

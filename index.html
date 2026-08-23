@@ -36,8 +36,20 @@
                 </form>
 
                 <form class="auth-form" id="signupForm" hidden>
-                    <label for="signupName">Full name</label>
-                    <input type="text" id="signupName" autocomplete="name" placeholder="Your full name" required>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="signupFirstName">First name</label>
+                            <input type="text" id="signupFirstName" autocomplete="given-name" placeholder="First name" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="signupMiddleName">Middle name</label>
+                            <input type="text" id="signupMiddleName" autocomplete="additional-name" placeholder="Middle name">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="signupLastName">Last name</label>
+                        <input type="text" id="signupLastName" autocomplete="family-name" placeholder="Last name" required>
+                    </div>
                     <label for="signupEmail">Email address</label>
                     <input type="email" id="signupEmail" autocomplete="email" placeholder="you@example.com" required>
                     <label for="signupPassword">Password</label>
@@ -95,25 +107,6 @@
                             <span aria-hidden="true">⌕</span>
                             <input type="search" id="studentSearch" placeholder="Search students..." aria-label="Search students">
                         </div>
-                        <details class="toolbar-menu">
-                            <summary class="tool-btn"><span aria-hidden="true">⚙</span> Filter</summary>
-                            <div class="tool-popover">
-                                <label for="studentStatusFilter">Student status</label>
-                                <select id="studentStatusFilter" aria-label="Student status filter">
-                                    <option value="active">Active students</option>
-                                    <option value="archived">Archived students</option>
-                                    <option value="all">All students</option>
-                                </select>
-                                <label for="studentYearFilter">Year</label>
-                                <select id="studentYearFilter" aria-label="Student year filter">
-                                    <option value="">All years</option><option value="1st Year">1st Year</option><option value="2nd Year">2nd Year</option><option value="3rd Year">3rd Year</option><option value="4th Year">4th Year</option>
-                                </select>
-                                <label for="studentCourseFilter">Course</label>
-                                <select id="studentCourseFilter" aria-label="Student course filter">
-                                    <option value="">All courses</option><option value="BSCS">BSCS</option><option value="BSIT">BSIT</option><option value="BSOA">BSOA</option>
-                                </select>
-                            </div>
-                        </details>
                         <div class="toolbar-actions">
                             <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                             <button class="add-btn toolbar-primary" type="button" data-admin-only="true" onclick="openStudentModal()">+ Add Student</button>
@@ -129,6 +122,7 @@
                                     <th scope="col">Student Name</th>
                                     <th scope="col">Course</th>
                                     <th scope="col">Year</th>
+                                    <th scope="col">School Year</th>
                                     <th scope="col">Status</th>
                                     <th scope="col">Actions</th>
                                 </tr>
@@ -139,6 +133,7 @@
                                     <td>John Cruz</td>
                                     <td>BSCS</td>
                                     <td>1st Year</td>
+                                    <td>2026-2027</td>
                                     <td>Present</td>
                                     <td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td>
                                 </tr>
@@ -147,6 +142,7 @@
                                     <td>Maria Santos</td>
                                     <td>BSIT</td>
                                     <td>2nd Year</td>
+                                    <td>2026-2027</td>
                                     <td>Late</td>
                                     <td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td>
                                 </tr>
@@ -155,6 +151,7 @@
                                     <td>Anne Reyes</td>
                                     <td>BSCS</td>
                                     <td>3rd Year</td>
+                                    <td>2026-2027</td>
                                     <td>Present</td>
                                     <td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td>
                                 </tr>
@@ -163,6 +160,7 @@
                                     <td>Peter Ramos</td>
                                     <td>BSOA</td>
                                     <td>1st Year</td>
+                                    <td>2026-2027</td>
                                     <td>Absent</td>
                                     <td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td>
                                 </tr>
@@ -199,38 +197,27 @@
 
                 <section id="attendanceView" class="view-section" hidden>
                     <div class="title">
-                        <h1>Student Attendance</h1>
+                        <div class="attendance-heading">
+                            <h1>Student Attendance</h1>
+                            <div class="attendance-date-nav" aria-label="Attendance date navigation">
+                                <button class="date-nav-button" type="button" aria-label="Previous day" onclick="changeAttendanceDate(-1)">←</button>
+                                <strong id="attendanceDateLabel">Today</strong>
+                                <button class="date-nav-button" type="button" aria-label="Next day" onclick="changeAttendanceDate(1)">→</button>
+                                <button class="today-button" type="button" onclick="goToAttendanceToday()">Today</button>
+                            </div>
+                            <p class="attendance-date-summary" id="attendanceDateSummary"></p>
+                        </div>
                         <div class="view-toolbar" aria-label="Attendance tools">
                             <div class="toolbar-search"><span aria-hidden="true">⌕</span><input type="search" id="attendanceSearch" placeholder="Search attendance..." aria-label="Search attendance"></div>
-                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                             <details class="toolbar-menu">
                                 <summary class="tool-btn"><span aria-hidden="true">⚙</span> Filter</summary>
                                 <div class="tool-popover filter-popover">
-                                    <label>Date <select id="attendanceDateFilter"><option value="">All dates</option><option value="August 4, 2026">August 4, 2026</option></select></label>
                                     <label>Subject <select id="attendanceSubjectFilter"><option value="">All subjects</option><option value="Programming 1">Programming 1</option><option value="Database">Database</option><option value="Networking">Networking</option></select></label>
                                     <label>Status <select id="attendanceStatusFilter"><option value="">All statuses</option><option value="Present">Present</option><option value="Late">Late</option><option value="Absent">Absent</option></select></label>
                                     <label>Course <select id="attendanceCourseFilter"><option value="">All courses</option><option value="BSCS">BSCS</option><option value="BSIT">BSIT</option><option value="BSOA">BSOA</option></select></label>
                                     <div class="filter-actions"><button class="menu-item" type="button" onclick="applyAttendanceFilters()">Apply filters</button><button class="menu-item" type="button" onclick="resetAttendanceFilters()">Reset</button></div>
                                 </div>
                             </details>
-                            <details class="toolbar-menu">
-                                <summary class="tool-btn"><span aria-hidden="true">↕</span> Sort</summary>
-                                <div class="tool-popover">
-                                    <label for="attendanceSortSelect">Sort attendance by</label>
-                                    <select id="attendanceSortSelect"><option value="id">Student ID</option><option value="name">Name</option><option value="date">Date</option><option value="subject">Subject</option><option value="status">Status</option></select>
-                                    <button class="menu-item" type="button" onclick="sortAttendanceFromMenu()">Apply sort</button>
-                                </div>
-                            </details>
-                            <details class="toolbar-menu">
-                                <summary class="tool-btn"><span aria-hidden="true">•••</span> More</summary>
-                                <div class="tool-popover"><button class="menu-item" type="button" onclick="resetAttendanceFilters()">Reset view</button><button class="menu-item" type="button" onclick="refreshDashboard()">Refresh data</button></div>
-                            </details>
-                        </div>
-                    </div>
-
-                    <section class="table-container">
-                        <table id="attendanceTable">
-                            <thead>
                                 <tr>
                                     <th scope="col">Student ID</th><th scope="col">Student Name</th><th scope="col">Date</th><th scope="col">Subject</th><th scope="col">Time In</th><th scope="col">Time Out</th><th scope="col">Status</th>
                                     <th scope="col">Action</th>
@@ -240,7 +227,7 @@
                                 <tr data-course="BSCS">
                                     <td>2026-001</td>
                                     <td>John Cruz</td>
-                                    <td>August 4, 2026</td>
+                                    <td>August 22, 2026</td>
                                     <td>Programming 1</td>
                                     <td>7:58 AM</td>
                                     <td>10:00 AM</td>
@@ -250,7 +237,7 @@
                                 <tr data-course="BSIT">
                                     <td>2026-002</td>
                                     <td>Maria Santos</td>
-                                    <td>August 4, 2026</td>
+                                    <td>August 22, 2026</td>
                                     <td>Database</td>
                                     <td>8:15 AM</td>
                                     <td>10:05 AM</td>
@@ -260,7 +247,7 @@
                                 <tr data-course="BSOA">
                                     <td>2026-003</td>
                                     <td>Peter Ramos</td>
-                                    <td>August 4, 2026</td>
+                                    <td>August 22, 2026</td>
                                     <td>Networking</td>
                                     <td>--</td>
                                     <td>--</td>
@@ -277,7 +264,6 @@
                     <div class="title">
                         <h1>Attendance Report</h1>
                         <div class="view-toolbar" aria-label="Report tools">
-                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                             <details class="toolbar-menu">
                                 <summary class="tool-btn"><span aria-hidden="true">⚙</span> Report filters</summary>
                                 <div class="tool-popover filter-popover">
@@ -290,6 +276,7 @@
                                 <summary class="tool-btn"><span aria-hidden="true">•••</span> More</summary>
                                 <div class="tool-popover"><button class="menu-item" type="button" onclick="exportReport()">Export CSV</button><button class="menu-item" type="button" onclick="window.print()">Print</button></div>
                             </details>
+                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                         </div>
                     </div>
                     <p class="report-range-message" id="reportRangeMessage" aria-live="polite"></p>
@@ -366,8 +353,10 @@
 
                 <section id="overviewView" class="view-section" hidden>
                     <div class="page-title">
-                        <h1>Attendance Overview</h1>
-                        <p>Monitor attendance percentages for daily, weekly, and monthly records.</p>
+                        <div>
+                            <h1>Attendance Overview</h1>
+                            <p>Monitor attendance percentages for daily, weekly, and monthly records.</p>
+                        </div>
                         <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                     </div>
 
@@ -462,10 +451,21 @@
                         </div>
                         <div class="view-toolbar" aria-label="History tools">
                             <div class="toolbar-search"><span aria-hidden="true">⌕</span><input type="search" id="historySearchInput" placeholder="Search history..." aria-label="Search history" onkeyup="searchHistory()"></div>
-                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                             <details class="toolbar-menu"><summary class="tool-btn"><span aria-hidden="true">⚙</span> Settings</summary><div class="tool-popover"><label><input type="checkbox" id="notifyAbsent" checked> Notify parent when absent</label><label><input type="checkbox" id="notifyLate" checked> Notify parent when late</label><label><input type="checkbox" id="notifyCheckIn" checked> Notify parent on check-in</label><button class="menu-item" type="button" onclick="saveNotificationSettings()">Save settings</button></div></details>
+                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                         </div>
                     </div>
+
+                    <section class="attendance-history-panel" aria-labelledby="attendanceHistoryTitle">
+                        <div class="section-heading">
+                            <div>
+                                <h2 id="attendanceHistoryTitle">Attendance History</h2>
+                                <p>Open attendance records from previous dates.</p>
+                            </div>
+                        </div>
+                        <div id="attendanceHistoryList"></div>
+                        <p class="empty-state" id="attendanceHistoryEmpty">No previous attendance records found.</p>
+                    </section>
 
                     <section class="audit-panel" aria-labelledby="auditTitle">
                         <h2 id="auditTitle">Recent Audit Activity</h2>
@@ -527,7 +527,6 @@
                     <div class="title">
                         <h1>Class Schedule</h1>
                         <div class="view-toolbar" aria-label="Schedule tools">
-                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                             <details class="toolbar-menu">
                                 <summary class="tool-btn"><span aria-hidden="true">⚙</span> Filter</summary>
                                 <div class="tool-popover filter-popover">
@@ -640,8 +639,35 @@
             <div class="modal-content">
                 <h2>Add Student</h2>
                 <input type="text" id="studentId" placeholder="Student ID">
-                <input type="text" id="fullName" placeholder="Full Name">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="studentFirstName">First name</label>
+                        <input type="text" id="studentFirstName" placeholder="First name">
+                    </div>
+                    <div class="form-group">
+                        <label for="studentMiddleName">Middle name</label>
+                        <input type="text" id="studentMiddleName" placeholder="Middle name">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="studentLastName">Last name</label>
+                    <input type="text" id="studentLastName" placeholder="Last name">
+                </div>
                 <input type="text" id="course" placeholder="Course">
+                <div class="school-year-fields student-school-year-fields">
+                    <label for="studentSchoolYearStart">Start year
+                        <input type="number" id="studentSchoolYearStart" placeholder="2026" min="2000" max="2100" required>
+                    </label>
+                    <span class="school-year-separator" aria-hidden="true">-</span>
+                    <label for="studentSchoolYearEnd">End year
+                        <input type="number" id="studentSchoolYearEnd" placeholder="2027" min="2000" max="2100" required>
+                    </label>
+                </div>
+                <div class="form-group">
+                    <label for="parentPhone">Parent's phone number</label>
+                    <input type="tel" id="parentPhone" placeholder="+63 912 345 6789" autocomplete="tel" inputmode="tel" maxlength="17" required>
+                    <small class="field-help">Use the international format when possible for future SMS alerts.</small>
+                </div>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="year">Year</label>
@@ -661,6 +687,11 @@
                             <option value="Irregular">Irregular</option>
                         </select>
                     </div>
+                </div>
+                <div class="form-group face-photo-field">
+                    <label for="facePhoto">Student face photo</label>
+                    <input type="file" id="facePhoto" accept="image/jpeg,image/png,image/webp" capture="user" required>
+                    <small>Use a clear, front-facing photo for recognition.</small>
                 </div>
                 <button class="save-btn" type="button" onclick="addStudent()">Save Student</button>
                 <button class="close-btn" type="button" onclick="closeStudentModal()">Cancel</button>

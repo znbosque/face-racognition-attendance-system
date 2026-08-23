@@ -52,7 +52,7 @@ if ($method === 'POST' && $action === 'logout') { $_SESSION = []; session_destro
 requireLogin();
 
 if ($method === 'GET' && $action === 'dashboard') {
-    $students = $db->query('SELECT student_id, full_name, course, year, status, is_archived, archived_school_year FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
+    $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
     $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time FROM schedules ORDER BY day, start_time')->fetchAll();
     $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status FROM attendance ORDER BY id')->fetchAll();
     $audit = $db->query('SELECT action, actor, created_at FROM audit_logs ORDER BY id DESC LIMIT 20')->fetchAll();
@@ -64,8 +64,38 @@ if ($method === 'GET' && $action === 'dashboard') {
 
 if ($method === 'POST' && $action === 'student') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
-    $statement = $db->prepare('INSERT INTO students (student_id, full_name, course, year, status) VALUES (?, ?, ?, ?, ?)');
-    $statement->execute([$payload['studentId'], $payload['fullName'], $payload['course'], $payload['year'], $payload['status']]);
+    $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'Please provide a valid school year, such as 2026-2027.'], 400);
+    $parentPhone = trim((string) ($payload['parentPhone'] ?? ''));
+    $phoneDigits = preg_replace('/\D+/', '', $parentPhone);
+    if (strlen($phoneDigits) < 7 || strlen($phoneDigits) > 15) reply(['message' => 'Please provide a valid parent phone number.'], 400);
+    if (str_starts_with($phoneDigits, '63')) {
+        $parentPhone = '+' . $phoneDigits;
+    } elseif (str_starts_with($phoneDigits, '0')) {
+        $parentPhone = '+63' . substr($phoneDigits, 1);
+    } else {
+        $parentPhone = '+' . $phoneDigits;
+    }
+    $facePhoto = (string) ($payload['facePhoto'] ?? '');
+    if (!preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $facePhoto, $matches)) reply(['message' => 'Please provide a valid face photo.'], 400);
+    $imageData = base64_decode($matches[2], true);
+    if ($imageData === false || strlen($imageData) > 5 * 1024 * 1024) reply(['message' => 'The face photo must be 5 MB or smaller.'], 400);
+    $imageInfo = @getimagesizefromstring($imageData);
+    if (!$imageInfo || !in_array($imageInfo['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) reply(['message' => 'The face photo is not a supported image.'], 400);
+    $imageDirectory = __DIR__ . DIRECTORY_SEPARATOR . 'face_images';
+    if (!is_dir($imageDirectory) && !mkdir($imageDirectory, 0755, true)) reply(['message' => 'Unable to create the face photo folder.'], 500);
+    $extension = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
+    $imageName = hash('sha256', (string) ($payload['studentId'] ?? '')) . '.' . $extension;
+    $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . $imageName;
+    if (file_put_contents($imagePath, $imageData) === false) reply(['message' => 'Unable to save the face photo.'], 500);
+    $relativeImagePath = 'face_images/' . $imageName;
+    $statement = $db->prepare('INSERT INTO students (student_id, full_name, course, year, school_year, status, parent_phone, face_image_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
+    try {
+        $statement->execute([$payload['studentId'], $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone, $relativeImagePath]);
+    } catch (PDOException $error) {
+        @unlink($imagePath);
+        throw $error;
+    }
     audit($db, 'Added student ' . $payload['studentId']);
     reply(['message' => 'Student added.']);
 }
@@ -83,8 +113,8 @@ if ($method === 'POST' && $action === 'archive-year') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
     $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
     if ($schoolYear === '') reply(['message' => 'A school year is required.'], 400);
-    $statement = $db->prepare('UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0');
-    $statement->execute([$schoolYear]);
+    $statement = $db->prepare('UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
+    $statement->execute([$schoolYear, $schoolYear]);
     audit($db, 'Archived students for school year ' . $schoolYear);
     reply(['message' => 'Students archived for ' . $schoolYear . '.']);
 }

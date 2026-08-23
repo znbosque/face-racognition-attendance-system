@@ -6,7 +6,7 @@ For the non-technical user:
 2. The attendance system opens in the browser at http://127.0.0.1:8080.
 3. When finished, double-click "Stop Attendance.vbs".
 
-The database is the file "attendance.sqlite" in this folder. Keep it in the same folder as api.php and db.php. Back it up by copying that file while the app is stopped.
+The database is the file "attendance.sqlite" in this folder. Keep it in the same folder as api.php and db.php. Face photos are stored in the "face_images" folder; keep that folder with the database when transferring or backing up the app. Back up the database and face_images folder while the app is stopped.
 
 The portable PHP runtime is already included in this folder:
 
@@ -16,7 +16,7 @@ The portable PHP runtime is already included in this folder:
 - Double-click `Start Attendance.vbs`. No PHP, XAMPP, MySQL, command prompt, or terminal installation is needed.
 - To shut down the app, double-click `Stop Attendance.vbs`.
 
-The database is `attendance.sqlite`. It is included in the folder and contains the saved accounts, students, attendance, schedules, archives, settings, and audit logs. Keep this file with the application. Back it up by copying it while the app is stopped.
+The database is `attendance.sqlite`. It is included in the folder and contains the saved accounts, students, attendance, schedules, archives, settings, and audit logs. Face photos are stored in the `face_images` folder. Keep both with the application. Back them up while the app is stopped.
 
 The launcher uses PHP's built-in web server. No MySQL, XAMPP, command prompt, or terminal setup is required on the user's computer when the php folder is included.
 
