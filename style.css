@@ -99,6 +99,10 @@ body {
     padding: 12px 13px;
 }
 
+.auth-form .form-group input {
+    width: 100%;
+}
+
 .auth-form input:focus {
     border-color: #800000;
     outline: 3px solid rgba(128, 0, 0, 0.12);
@@ -149,10 +153,15 @@ body {
     color: #c62828;
 }
 
+.auth-message:empty {
+    min-height: 0;
+    margin-top: 0;
+}
+
 .auth-note {
     color: #8b7d7d;
     font-size: 11px;
-    margin-top: 16px;
+    margin-top: 8px;
     text-align: center;
 }
 
@@ -767,6 +776,10 @@ tr:hover {
     gap: 8px;
 }
 
+.attendance-heading + .view-toolbar {
+    align-self: flex-end;
+}
+
 .date-nav-button,
 .today-button {
     background: white;
@@ -1318,6 +1331,16 @@ tr:hover {
     margin-bottom: 15px;
 }
 
+#archiveSchoolYearModal .modal-content h2,
+#attendanceArchiveModal .modal-content h2 {
+    margin-bottom: 8px;
+}
+
+#archiveSchoolYearModal .profile-note,
+#attendanceArchiveModal .profile-note {
+    margin-bottom: 12px;
+}
+
 .modal-content input,
 .modal-content select {
     width: 100%;
@@ -1498,6 +1521,10 @@ tr:hover {
     .title > .view-toolbar {
         justify-content: flex-start;
         width: 100%;
+    }
+
+    .attendance-heading + .view-toolbar {
+        align-self: stretch;
     }
 
     .toolbar-search {

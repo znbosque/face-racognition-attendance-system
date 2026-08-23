@@ -54,7 +54,7 @@ requireLogin();
 if ($method === 'GET' && $action === 'dashboard') {
     $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
     $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time FROM schedules ORDER BY day, start_time')->fetchAll();
-    $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status FROM attendance ORDER BY id')->fetchAll();
+    $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, is_archived FROM attendance ORDER BY id')->fetchAll();
     $audit = $db->query('SELECT action, actor, created_at FROM audit_logs ORDER BY id DESC LIMIT 20')->fetchAll();
     $settings = $db->query('SELECT setting_key, setting_value FROM notification_settings')->fetchAll();
     $notificationSettings = [];
@@ -117,6 +117,20 @@ if ($method === 'POST' && $action === 'archive-year') {
     $statement->execute([$schoolYear, $schoolYear]);
     audit($db, 'Archived students for school year ' . $schoolYear);
     reply(['message' => 'Students archived for ' . $schoolYear . '.']);
+}
+
+if ($method === 'POST' && $action === 'archive-attendance-date') {
+    if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
+    $dateKey = trim((string) ($payload['date'] ?? ''));
+    $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
+    $date = DateTime::createFromFormat('!Y-m-d', $dateKey);
+    if (!$date || $date->format('Y-m-d') !== $dateKey) reply(['message' => 'A valid attendance date is required.'], 400);
+    if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'A valid school year is required.'], 400);
+    $displayDate = $date->format('F j, Y');
+    $statement = $db->prepare('UPDATE attendance SET is_archived = 1 WHERE attendance_date = ? AND is_archived = 0');
+    $statement->execute([$displayDate]);
+    audit($db, 'Archived attendance for ' . $displayDate . ' (' . $schoolYear . ')');
+    reply(['message' => 'Attendance archived for ' . $displayDate . '.']);
 }
 
 if ($method === 'POST' && $action === 'restore-year') {

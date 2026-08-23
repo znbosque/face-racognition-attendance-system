@@ -72,8 +72,18 @@ try {
         time_in TEXT NOT NULL,
         time_out TEXT NOT NULL,
         status TEXT NOT NULL,
+        is_archived INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )');
+    $attendanceColumns = $db->query('PRAGMA table_info(attendance)')->fetchAll();
+    $hasAttendanceArchiveColumn = false;
+    foreach ($attendanceColumns as $column) {
+        if ($column['name'] === 'is_archived') {
+            $hasAttendanceArchiveColumn = true;
+            break;
+        }
+    }
+    if (!$hasAttendanceArchiveColumn) $db->exec('ALTER TABLE attendance ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
     $db->exec('CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         action TEXT NOT NULL,

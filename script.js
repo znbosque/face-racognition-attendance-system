@@ -60,11 +60,11 @@ async function loadDashboardData() {
     const attendanceBody = document.getElementById('attendanceTableBody');
     if (attendanceBody) {
         attendanceBody.innerHTML = dashboardData.attendance.map(function (record) {
-            return `<tr data-course="${escapeHtml(record.course)}" data-attendance-date="${attendanceDateKey(record.attendance_date)}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${escapeHtml(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
+            return `<tr data-course="${escapeHtml(record.course)}" data-attendance-date="${attendanceDateKey(record.attendance_date)}" data-attendance-archived="${Number(record.is_archived) === 1}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${escapeHtml(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
         }).join('');
         getAttendanceRows().forEach(function (row) { row.dataset.matchesFilter = 'true'; });
         renderAttendanceDateControls();
-        renderAttendancePage();
+        applyAttendanceFilters();
     }
     const scheduleBody = document.getElementById('scheduleTableBody');
     if (scheduleBody) {
@@ -151,10 +151,7 @@ async function initializeAuth() {
 
     document.getElementById('signupForm').addEventListener('submit', async function (event) {
         event.preventDefault();
-        const firstName = document.getElementById('signupFirstName').value.trim();
-        const middleName = document.getElementById('signupMiddleName').value.trim();
-        const lastName = document.getElementById('signupLastName').value.trim();
-        const name = [firstName, middleName, lastName].filter(Boolean).join(' ');
+        const name = document.getElementById('signupFullName').value.trim();
         const email = document.getElementById('signupEmail').value.trim().toLowerCase();
         const password = document.getElementById('signupPassword').value;
         try {
@@ -269,16 +266,8 @@ function renderAttendanceDateControls() {
     const todayKey = attendanceDateKey(new Date());
     const label = document.getElementById('attendanceDateLabel');
     const nextButton = document.querySelector('.attendance-date-nav .date-nav-button:nth-of-type(2)');
-    const summary = document.getElementById('attendanceDateSummary');
-    const rows = getAttendanceRows().filter(function (row) { return row.dataset.attendanceDate === attendanceState.selectedDate; });
-    const counts = { Present: 0, Late: 0, Absent: 0 };
-    rows.forEach(function (row) {
-        const status = row.cells[6].textContent.trim();
-        counts[status] = (counts[status] || 0) + 1;
-    });
     if (label) label.textContent = attendanceState.selectedDate === todayKey ? 'Today' : attendanceDateLabel(attendanceState.selectedDate);
     if (nextButton) nextButton.disabled = attendanceState.selectedDate >= todayKey;
-    if (summary) summary.textContent = `${counts.Present} Present    ${counts.Late} Late    ${counts.Absent} Absent`;
 }
 
 function selectAttendanceDate(dateKey) {
@@ -339,6 +328,7 @@ function applyAttendanceFilters() {
     getAttendanceRows().forEach(function (row) {
         const matches = (!search || getAttendanceValue(row, 'name').includes(search))
             && row.dataset.attendanceDate === attendanceState.selectedDate
+            && row.dataset.attendanceArchived !== 'true'
             && (!subject || row.cells[3].textContent.trim() === subject)
             && (!status || row.cells[6].textContent.trim() === status)
             && (!course || row.dataset.course === course);
@@ -347,6 +337,38 @@ function applyAttendanceFilters() {
 
     attendanceState.page = 1;
     renderAttendancePage();
+}
+
+function openAttendanceArchiveModal() {
+    const modal = document.getElementById('attendanceArchiveModal');
+    const dateLabel = document.getElementById('attendanceArchiveDateLabel');
+    if (!modal) return;
+    if (dateLabel) dateLabel.textContent = attendanceState.selectedDate === attendanceDateKey(new Date()) ? 'today' : attendanceDateLabel(attendanceState.selectedDate);
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeAttendanceArchiveModal() {
+    const modal = document.getElementById('attendanceArchiveModal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+async function confirmAttendanceArchive() {
+    const startYear = document.getElementById('attendanceArchiveStartYear').value;
+    const endYear = document.getElementById('attendanceArchiveEndYear').value;
+    if (Number(endYear) !== Number(startYear) + 1) {
+        alert('Choose the following year in the To box, such as 2027 for 2026 - 2027.');
+        return;
+    }
+    try {
+        await requestApi('archive-attendance-date', { method: 'POST', body: JSON.stringify({ date: attendanceState.selectedDate, schoolYear: `${startYear}-${endYear}` }) });
+        closeAttendanceArchiveModal();
+        await loadDashboardData();
+    } catch (error) {
+        alert(error.message);
+    }
 }
 
 function resetAttendanceFilters() {
@@ -437,7 +459,7 @@ function initializeAttendanceTools() {
 
 initializeAttendanceTools();
 
-const studentState = { sortKey: '', sortDirection: 1 };
+const studentState = { sortKey: '', sortDirection: 1, page: 1, pageSize: 10 };
 
 function getStudentRows() {
     const table = document.getElementById('studentTable');
@@ -448,8 +470,10 @@ function filterStudents() {
     const search = document.getElementById('studentSearch').value.trim().toLowerCase();
     getStudentRows().forEach(function (row) {
         const rowText = row.textContent.toLowerCase();
-        row.hidden = row.dataset.studentStatus === 'archived' || (search && !rowText.includes(search));
+        row.dataset.matchesFilter = String(row.dataset.studentStatus !== 'archived' && (!search || rowText.includes(search)));
     });
+    studentState.page = 1;
+    renderStudentPage();
 }
 
 function sortStudents(sortKey) {
@@ -471,6 +495,31 @@ function sortStudents(sortKey) {
         return first.localeCompare(second, undefined, { numeric: true }) * studentState.sortDirection;
     }).forEach(function (row) { body.appendChild(row); });
     filterStudents();
+}
+
+function renderStudentPage() {
+    const rows = getStudentRows();
+    const filteredRows = rows.filter(function (row) { return row.dataset.matchesFilter !== 'false'; });
+    const totalPages = Math.max(1, Math.ceil(filteredRows.length / studentState.pageSize));
+    studentState.page = Math.min(studentState.page, totalPages);
+    const firstIndex = (studentState.page - 1) * studentState.pageSize;
+
+    rows.forEach(function (row) { row.hidden = true; });
+    filteredRows.slice(firstIndex, firstIndex + studentState.pageSize).forEach(function (row) { row.hidden = false; });
+
+    const pagination = document.getElementById('studentPagination');
+    if (!pagination) return;
+    pagination.innerHTML = `
+        <span>Showing ${filteredRows.length ? firstIndex + 1 : 0}-${Math.min(firstIndex + studentState.pageSize, filteredRows.length)} of ${filteredRows.length} students</span>
+        <button type="button" ${studentState.page === 1 ? 'disabled' : ''} onclick="changeStudentPage(-1)">Previous</button>
+        <strong>Page ${studentState.page} of ${totalPages}</strong>
+        <button type="button" ${studentState.page === totalPages ? 'disabled' : ''} onclick="changeStudentPage(1)">Next</button>
+    `;
+}
+
+function changeStudentPage(change) {
+    studentState.page += change;
+    renderStudentPage();
 }
 
 function openStudentProfile(button) {

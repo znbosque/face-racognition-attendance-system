@@ -36,19 +36,9 @@
                 </form>
 
                 <form class="auth-form" id="signupForm" hidden>
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="signupFirstName">First name</label>
-                            <input type="text" id="signupFirstName" autocomplete="given-name" placeholder="First name" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="signupMiddleName">Middle name</label>
-                            <input type="text" id="signupMiddleName" autocomplete="additional-name" placeholder="Middle name">
-                        </div>
-                    </div>
                     <div class="form-group">
-                        <label for="signupLastName">Last name</label>
-                        <input type="text" id="signupLastName" autocomplete="family-name" placeholder="Last name" required>
+                        <label for="signupFullName">Full name</label>
+                        <input type="text" id="signupFullName" autocomplete="name" placeholder="Full name" required>
                     </div>
                     <label for="signupEmail">Email address</label>
                     <input type="email" id="signupEmail" autocomplete="email" placeholder="you@example.com" required>
@@ -167,6 +157,7 @@
                             </tbody>
                         </table>
                     </section>
+                    <div class="pagination" id="studentPagination" aria-label="Student list pagination"></div>
                 </section>
 
                 <section id="archiveView" class="view-section" hidden>
@@ -205,7 +196,6 @@
                                 <button class="date-nav-button" type="button" aria-label="Next day" onclick="changeAttendanceDate(1)">→</button>
                                 <button class="today-button" type="button" onclick="goToAttendanceToday()">Today</button>
                             </div>
-                            <p class="attendance-date-summary" id="attendanceDateSummary"></p>
                         </div>
                         <div class="view-toolbar" aria-label="Attendance tools">
                             <div class="toolbar-search"><span aria-hidden="true">⌕</span><input type="search" id="attendanceSearch" placeholder="Search attendance..." aria-label="Search attendance"></div>
@@ -218,6 +208,14 @@
                                     <div class="filter-actions"><button class="menu-item" type="button" onclick="applyAttendanceFilters()">Apply filters</button><button class="menu-item" type="button" onclick="resetAttendanceFilters()">Reset</button></div>
                                 </div>
                             </details>
+                            <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openAttendanceArchiveModal()">Archive</button>
+                        </div>
+                    </div>
+
+                    <section class="table-container" aria-labelledby="attendance-table-title">
+                        <h2 id="attendance-table-title" class="sr-only">Student attendance records</h2>
+                        <table id="attendanceTable">
+                            <thead>
                                 <tr>
                                     <th scope="col">Student ID</th><th scope="col">Student Name</th><th scope="col">Date</th><th scope="col">Subject</th><th scope="col">Time In</th><th scope="col">Time Out</th><th scope="col">Status</th>
                                     <th scope="col">Action</th>
@@ -597,6 +595,28 @@
                 </div>
                 <button class="save-btn" type="button" onclick="confirmArchiveSchoolYear()">Archive</button>
                 <button class="close-btn" type="button" onclick="closeArchiveSchoolYearModal()">Cancel</button>
+            </div>
+        </div>
+
+        <div class="modal" id="attendanceArchiveModal" aria-hidden="true">
+            <div class="modal-content confirm-modal-content">
+                <h2>Archive</h2>
+                <p class="profile-note">Archive all attendance records for <strong id="attendanceArchiveDateLabel"></strong>?</p>
+                <div class="school-year-fields">
+                    <label for="attendanceArchiveStartYear">From
+                        <select id="attendanceArchiveStartYear" aria-label="Attendance archive school year start">
+                            <option value="2024">2024</option><option value="2025">2025</option><option value="2026" selected>2026</option><option value="2027">2027</option><option value="2028">2028</option><option value="2029">2029</option><option value="2030">2030</option><option value="2031">2031</option><option value="2032">2032</option><option value="2033">2033</option><option value="2034">2034</option><option value="2035">2035</option>
+                        </select>
+                    </label>
+                    <span class="school-year-separator" aria-hidden="true">-</span>
+                    <label for="attendanceArchiveEndYear">To
+                        <select id="attendanceArchiveEndYear" aria-label="Attendance archive school year end">
+                            <option value="2025">2025</option><option value="2026">2026</option><option value="2027" selected>2027</option><option value="2028">2028</option><option value="2029">2029</option><option value="2030">2030</option><option value="2031">2031</option><option value="2032">2032</option><option value="2033">2033</option><option value="2034">2034</option><option value="2035">2035</option><option value="2036">2036</option>
+                        </select>
+                    </label>
+                </div>
+                <button class="save-btn" type="button" onclick="confirmAttendanceArchive()">Archive</button>
+                <button class="close-btn" type="button" onclick="closeAttendanceArchiveModal()">Cancel</button>
             </div>
         </div>
 
