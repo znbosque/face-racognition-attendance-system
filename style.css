@@ -277,6 +277,13 @@ body {
     font-weight: bold;
 }
 
+.admin-icon.has-profile-image,
+.admin-profile-photo.has-profile-image {
+    background-position: center;
+    background-repeat: no-repeat;
+    background-size: cover;
+}
+
 .caret {
     font-size: 12px;
 }
@@ -299,6 +306,20 @@ body {
     padding: 15px;
     color: #333;
     text-decoration: none;
+}
+
+.account-menu-heading {
+    color: #8b7777;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 1.2px;
+    padding: 12px 15px 6px;
+    text-transform: uppercase;
+}
+
+.account-menu-divider {
+    border-top: 1px solid #eee5e5;
+    margin: 3px 12px;
 }
 
 .dropdown a:hover {
@@ -508,17 +529,42 @@ body {
 }
 
 .row-menu > summary {
+    background: #fff;
     border: 0;
-    min-height: 30px;
-    padding: 5px 8px;
+    color: #6b5b5b;
+    font-size: 16px;
+    min-height: 26px;
+    padding: 2px 5px;
 }
 
 .row-menu[open] {
-    z-index: 30;
+    position: relative;
+    z-index: 1001;
 }
 
 .row-menu__content {
+    background: #fff;
+    border: 0;
+    box-shadow: none;
     min-width: 120px;
+    padding: 4px;
+    z-index: 1002;
+}
+
+.row-menu__content .menu-item,
+.row-menu__content .archive-action,
+.row-menu__content .restore-action {
+    background: transparent;
+    border: 0;
+    color: #4b3b3b;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.row-menu__content .menu-item:hover,
+.row-menu__content .archive-action:hover,
+.row-menu__content .restore-action:hover {
+    background: #fff;
 }
 
 .student-toolbar,
@@ -686,6 +732,206 @@ body {
     line-height: 1.5;
 }
 
+.admin-profile-content,
+.settings-content {
+    align-self: stretch;
+    border-left: 1px solid #eadede;
+    border-radius: 0;
+    box-shadow: -8px 0 24px rgba(50, 28, 28, 0.12);
+    max-width: 390px;
+    overflow-y: auto;
+    padding: 24px;
+}
+
+#adminProfileModal,
+#settingsModal {
+    align-items: stretch;
+    justify-content: flex-end;
+}
+
+.modal-heading-row {
+    align-items: flex-start;
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+}
+
+.modal-heading-row h2 {
+    margin-bottom: 0;
+}
+
+.modal-eyebrow {
+    color: #800000;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1.5px;
+    margin-bottom: 4px;
+    text-transform: uppercase;
+}
+
+.modal-icon-close {
+    background: #f7f2f2;
+    border: 0;
+    border-radius: 50%;
+    color: #5b4545;
+    cursor: pointer;
+    font-size: 22px;
+    height: 32px;
+    line-height: 1;
+    width: 32px;
+}
+
+.profile-photo-editor {
+    align-items: center;
+    background: #fbf8f8;
+    border: 1px solid #eee1e1;
+    border-radius: 10px;
+    display: flex;
+    gap: 16px;
+    margin-bottom: 18px;
+    padding: 15px;
+}
+
+.admin-profile-photo {
+    align-items: center;
+    background-color: #800000;
+    border-radius: 50%;
+    color: white;
+    display: flex;
+    flex: 0 0 72px;
+    font-size: 30px;
+    height: 72px;
+    justify-content: center;
+    width: 72px;
+}
+
+.upload-photo-button {
+    background: #800000;
+    border-radius: 6px;
+    color: white;
+    cursor: pointer;
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 9px 12px;
+}
+
+#adminProfilePhoto {
+    display: none;
+}
+
+.profile-photo-editor small {
+    color: #777;
+    display: block;
+    font-size: 11px;
+    margin-top: 6px;
+}
+
+.profile-form-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.profile-form-grid label,
+.setting-toggle {
+    color: #555;
+    display: grid;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 5px;
+}
+
+.profile-form-grid input {
+    border: 1px solid #d9cece;
+    border-radius: 6px;
+    font: inherit;
+    padding: 10px;
+}
+
+.profile-form-grid input[readonly] {
+    background: #f5f2f2;
+    color: #777;
+}
+
+.setting-field {
+    color: #555;
+    display: grid;
+    font-size: 12px;
+    font-weight: 600;
+    gap: 5px;
+    margin-bottom: 14px;
+}
+
+.setting-field select {
+    background: white;
+    border: 1px solid #d9cece;
+    border-radius: 6px;
+    color: #443838;
+    font: inherit;
+    padding: 10px;
+}
+
+.setting-field textarea {
+    border: 1px solid #d9cece;
+    border-radius: 6px;
+    color: #443838;
+    font: inherit;
+    line-height: 1.45;
+    padding: 10px;
+    resize: vertical;
+}
+
+.settings-section {
+    border-top: 1px solid #eee2e2;
+    padding: 16px 0 4px;
+}
+
+.settings-section h3 {
+    margin: 0;
+}
+
+.settings-description {
+    color: #777;
+    font-size: 12px;
+    line-height: 1.5;
+    margin: -4px 0 14px;
+}
+
+.setting-toggle {
+    align-items: center;
+    display: flex;
+    font-weight: 400;
+    gap: 9px;
+    margin-bottom: 12px;
+}
+
+.setting-toggle input {
+    accent-color: #800000;
+    height: 16px;
+    width: 16px;
+}
+
+.settings-message {
+    color: #2e7d32;
+    font-size: 12px;
+    min-height: 18px;
+    text-align: center;
+}
+
+body.compact-tables td,
+body.compact-tables th {
+    padding-bottom: 9px;
+    padding-top: 9px;
+}
+
+@media (max-width: 600px) {
+    .admin-profile-content,
+    .settings-content {
+        max-width: min(360px, 88vw);
+        padding: 20px;
+    }
+}
+
 .add-btn {
     background: #800000;
     color: white;
@@ -706,8 +952,12 @@ body {
 .table-container {
     background: white;
     border-radius: 5px;
-    overflow: hidden;
+    overflow: visible;
     box-shadow: 0 8px 20px rgba(0, 0, 0, 0.08);
+}
+
+.table-container td:last-child {
+    position: relative;
 }
 
 .empty-state {
@@ -809,6 +1059,61 @@ tr:hover {
 #reportView .report-range-message {
     margin: 0 0 12px;
     min-height: 0;
+}
+
+.archive-detail-heading {
+    align-items: flex-start;
+}
+
+.back-link,
+.archive-year-link {
+    border: 0;
+    background: transparent;
+    color: var(--primary-color, #2457a6);
+    cursor: pointer;
+    font: inherit;
+    padding: 0;
+}
+
+.back-link {
+    margin-bottom: 0.5rem;
+}
+
+.archive-year-link {
+    font-weight: 600;
+    text-decoration: underline;
+    text-underline-offset: 0.2em;
+}
+
+.archive-category-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 1.25rem 0;
+}
+
+.archive-category-tab {
+    background: #f1f4f8;
+    border: 1px solid #d7dee8;
+    border-radius: 0.35rem;
+    color: #334155;
+    cursor: pointer;
+    padding: 0.65rem 1rem;
+}
+
+.archive-category-tab.active,
+.archive-category-tab:hover {
+    background: #2457a6;
+    border-color: #2457a6;
+    color: #fff;
+}
+
+.archive-detail-panel h2 {
+    margin-top: 0;
+}
+
+.archive-overview-summary {
+    margin-top: 0;
 }
 
 #reportView .summary {
@@ -1246,6 +1551,175 @@ tr:hover {
     font-weight: bold;
 }
 
+.status-indicator {
+    display: inline-block;
+    font-weight: 600;
+}
+
+.status-indicator.good {
+    color: #237a35;
+}
+
+.status-indicator.warning {
+    color: #9a6500;
+}
+
+.status-indicator.danger {
+    color: #b42323;
+}
+
+.print-document-header {
+    display: none;
+}
+
+@media print {
+    @page {
+        margin: 18mm 16mm;
+    }
+
+    body {
+        background: #fff;
+        color: #111;
+    }
+
+    body[data-print-view="report"] .site-header,
+    body[data-print-view="archive-report"] .site-header,
+    body[data-print-view="report"] .view-section:not(#reportView),
+    body[data-print-view="archive-report"] .view-section:not(#archiveDetailView),
+    body[data-print-view="report"] .report-print-button,
+    body[data-print-view="report"] .archive-school-year-btn,
+    body[data-print-view="archive-report"] .archive-detail-heading button,
+    body[data-print-view="archive-report"] .archive-category-tabs,
+    body[data-print-view="report"] .view-toolbar,
+    body[data-print-view="archive-report"] .back-link {
+        display: none !important;
+    }
+
+    body[data-print-view="report"] .print-document-header,
+    body[data-print-view="archive-report"] .print-document-header {
+        display: block;
+        border-bottom: 2px solid #222;
+        margin-bottom: 18px;
+        padding-bottom: 12px;
+        text-align: center;
+    }
+
+    .print-document-brand {
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: 2px;
+    }
+
+    .print-document-header h1 {
+        font-family: Georgia, serif;
+        font-size: 22px;
+        margin: 5px 0;
+    }
+
+    .print-document-header p {
+        color: #444;
+        font-size: 10px;
+    }
+
+    body[data-print-view="report"] .container,
+    body[data-print-view="archive-report"] .container {
+        max-width: none;
+        padding: 0;
+    }
+
+    body[data-print-view="report"] #reportView,
+    body[data-print-view="archive-report"] #archiveDetailView {
+        display: block !important;
+    }
+
+    body[data-print-view="report"] #reportView > .title > h1,
+    body[data-print-view="archive-report"] #archiveDetailTitle,
+    body[data-print-view="archive-report"] #archiveDetailSubtitle {
+        display: none;
+    }
+
+    .table-container {
+        border: 0;
+        box-shadow: none;
+        overflow: visible;
+    }
+
+    table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+
+    thead {
+        display: table-header-group;
+    }
+
+    tr {
+        break-inside: avoid;
+    }
+
+    th,
+    td {
+        border: 1px solid #999;
+        color: #111 !important;
+        font-size: 10px;
+        padding: 7px 6px;
+    }
+
+    th {
+        background: #eee !important;
+        font-weight: 700;
+    }
+
+    .status-indicator {
+        color: #111 !important;
+        font-weight: 700;
+    }
+
+    #reportView .summary,
+    .archive-report-summary {
+        align-items: center;
+        display: flex;
+        gap: 0;
+        justify-content: space-between;
+        margin: 0 0 14px;
+        width: 100%;
+    }
+
+    #reportView .summary .card,
+    .archive-report-summary .card {
+        align-items: baseline;
+        background: transparent;
+        border-right: 1px solid #aaa;
+        border-radius: 0;
+        box-shadow: none;
+        display: flex;
+        flex: 1;
+        gap: 6px;
+        justify-content: center;
+        padding: 2px 8px;
+        text-align: center;
+    }
+
+    #reportView .summary .card:last-child,
+    .archive-report-summary .card:last-child {
+        border-right: 0;
+    }
+
+    #reportView .summary .card h2,
+    #reportView .summary .card p,
+    .archive-report-summary .card h2,
+    .archive-report-summary .card p {
+        color: #222;
+        font-size: 10px;
+        margin: 0;
+    }
+
+    #reportView .summary .card p,
+    .archive-report-summary .card p {
+        font-weight: 700;
+    }
+}
+
 .modal {
     display: none;
     position: fixed;
@@ -1533,7 +2007,7 @@ tr:hover {
     }
 
     .table-container {
-        overflow-x: auto;
+        overflow: visible;
     }
 
     table {

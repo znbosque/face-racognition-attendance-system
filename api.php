@@ -28,7 +28,7 @@ if ($method === 'POST' && $action === 'signup') {
     try {
         $statement = $db->prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)');
         $statement->execute([$name, $email, password_hash($password, PASSWORD_DEFAULT), $role]);
-        $_SESSION['user'] = ['name' => $name, 'email' => $email, 'role' => $role];
+        $_SESSION['user'] = ['id' => (int) $db->lastInsertId(), 'name' => $name, 'email' => $email, 'role' => $role, 'profileImage' => null];
         audit($db, 'Created account');
         reply(['user' => user()], 201);
     } catch (PDOException $error) {
@@ -38,23 +38,60 @@ if ($method === 'POST' && $action === 'signup') {
 }
 
 if ($method === 'POST' && $action === 'login') {
-    $statement = $db->prepare('SELECT name, email, role, password_hash FROM users WHERE email = ? LIMIT 1');
+    $statement = $db->prepare('SELECT id, name, email, role, password_hash, profile_image FROM users WHERE email = ? LIMIT 1');
     $statement->execute([strtolower(trim((string) ($payload['email'] ?? '')))]);
     $record = $statement->fetch();
     if (!$record || !password_verify((string) ($payload['password'] ?? ''), $record['password_hash'])) reply(['message' => 'Incorrect email or password.'], 401);
-    $_SESSION['user'] = ['name' => $record['name'], 'email' => $record['email'], 'role' => $record['role']];
+    $_SESSION['user'] = ['id' => (int) $record['id'], 'name' => $record['name'], 'email' => $record['email'], 'role' => $record['role'], 'profileImage' => $record['profile_image']];
     reply(['user' => user()]);
 }
 
-if ($action === 'me') { requireLogin(); reply(['user' => user()]); }
+if ($action === 'me') {
+    requireLogin();
+    $statement = $db->prepare('SELECT id, name, email, role, profile_image FROM users WHERE email = ? LIMIT 1');
+    $statement->execute([user()['email'] ?? '']);
+    $record = $statement->fetch();
+    if ($record) {
+        $_SESSION['user'] = ['id' => (int) $record['id'], 'name' => $record['name'], 'email' => $record['email'], 'role' => $record['role'], 'profileImage' => $record['profile_image']];
+    }
+    reply(['user' => user()]);
+}
 if ($method === 'POST' && $action === 'logout') { $_SESSION = []; session_destroy(); reply(['message' => 'Logged out.']); }
 
 requireLogin();
 
+if ($method === 'POST' && $action === 'profile') {
+    $name = trim((string) ($payload['name'] ?? ''));
+    $profileImage = (string) ($payload['profileImage'] ?? '');
+    if ($name === '') reply(['message' => 'A full name is required.'], 400);
+    if ($profileImage !== '' && !preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $profileImage, $matches)) reply(['message' => 'Please upload a valid JPG, PNG, or WebP image.'], 400);
+    if ($profileImage !== '' && strlen($profileImage) > 2 * 1024 * 1024 * 1.4) reply(['message' => 'The profile photo must be 2 MB or smaller.'], 400);
+    $statement = $db->prepare('UPDATE users SET name = ?, profile_image = ? WHERE id = ?');
+    $statement->execute([$name, $profileImage !== '' ? $profileImage : (user()['profileImage'] ?? null), user()['id']]);
+    $_SESSION['user']['name'] = $name;
+    if ($profileImage !== '') $_SESSION['user']['profileImage'] = $profileImage;
+    audit($db, 'Updated administrator profile');
+    reply(['user' => user(), 'message' => 'Profile saved.']);
+}
+
+if ($method === 'POST' && $action === 'password') {
+    $currentPassword = (string) ($payload['currentPassword'] ?? '');
+    $newPassword = (string) ($payload['newPassword'] ?? '');
+    if (strlen($newPassword) < 6) reply(['message' => 'The new password must be at least 6 characters.'], 400);
+    $statement = $db->prepare('SELECT password_hash FROM users WHERE id = ? LIMIT 1');
+    $statement->execute([user()['id'] ?? 0]);
+    $record = $statement->fetch();
+    if (!$record || !password_verify($currentPassword, $record['password_hash'])) reply(['message' => 'The current password is incorrect.'], 400);
+    $statement = $db->prepare('UPDATE users SET password_hash = ? WHERE id = ?');
+    $statement->execute([password_hash($newPassword, PASSWORD_DEFAULT), user()['id']]);
+    audit($db, 'Changed administrator password');
+    reply(['message' => 'Password changed successfully.']);
+}
+
 if ($method === 'GET' && $action === 'dashboard') {
     $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
-    $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time FROM schedules ORDER BY day, start_time')->fetchAll();
-    $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, is_archived FROM attendance ORDER BY id')->fetchAll();
+    $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time, school_year, is_archived, archived_school_year FROM schedules ORDER BY day, start_time')->fetchAll();
+    $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year, is_archived, archived_school_year FROM attendance ORDER BY id')->fetchAll();
     $audit = $db->query('SELECT action, actor, created_at FROM audit_logs ORDER BY id DESC LIMIT 20')->fetchAll();
     $settings = $db->query('SELECT setting_key, setting_value FROM notification_settings')->fetchAll();
     $notificationSettings = [];
@@ -115,6 +152,10 @@ if ($method === 'POST' && $action === 'archive-year') {
     if ($schoolYear === '') reply(['message' => 'A school year is required.'], 400);
     $statement = $db->prepare('UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
     $statement->execute([$schoolYear, $schoolYear]);
+    $attendanceStatement = $db->prepare('UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE is_archived = 0 AND student_id IN (SELECT student_id FROM students WHERE archived_school_year = ?)');
+    $attendanceStatement->execute([$schoolYear, $schoolYear, $schoolYear]);
+    $scheduleStatement = $db->prepare('UPDATE schedules SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
+    $scheduleStatement->execute([$schoolYear, $schoolYear]);
     audit($db, 'Archived students for school year ' . $schoolYear);
     reply(['message' => 'Students archived for ' . $schoolYear . '.']);
 }
@@ -127,8 +168,8 @@ if ($method === 'POST' && $action === 'archive-attendance-date') {
     if (!$date || $date->format('Y-m-d') !== $dateKey) reply(['message' => 'A valid attendance date is required.'], 400);
     if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'A valid school year is required.'], 400);
     $displayDate = $date->format('F j, Y');
-    $statement = $db->prepare('UPDATE attendance SET is_archived = 1 WHERE attendance_date = ? AND is_archived = 0');
-    $statement->execute([$displayDate]);
+    $statement = $db->prepare('UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE attendance_date = ? AND is_archived = 0');
+    $statement->execute([$schoolYear, $schoolYear, $displayDate]);
     audit($db, 'Archived attendance for ' . $displayDate . ' (' . $schoolYear . ')');
     reply(['message' => 'Attendance archived for ' . $displayDate . '.']);
 }
@@ -139,19 +180,25 @@ if ($method === 'POST' && $action === 'restore-year') {
     if ($schoolYear === '') reply(['message' => 'A school year is required.'], 400);
     $statement = $db->prepare('UPDATE students SET is_archived = 0, archived_school_year = NULL WHERE archived_school_year = ?');
     $statement->execute([$schoolYear]);
+    $attendanceStatement = $db->prepare('UPDATE attendance SET is_archived = 0, archived_school_year = NULL WHERE archived_school_year = ?');
+    $attendanceStatement->execute([$schoolYear]);
+    $scheduleStatement = $db->prepare('UPDATE schedules SET is_archived = 0, archived_school_year = NULL WHERE archived_school_year = ?');
+    $scheduleStatement->execute([$schoolYear]);
     audit($db, 'Restored students for school year ' . $schoolYear);
     reply(['message' => 'Students restored for ' . $schoolYear . '.']);
 }
 
 if ($method === 'POST' && $action === 'schedule') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
+    $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
+    if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'Please provide a valid school year, such as 2026-2027.'], 400);
     if (!empty($payload['id'])) {
-        $statement = $db->prepare('UPDATE schedules SET subject = ?, instructor = ?, room = ?, day = ?, start_time = ?, end_time = ? WHERE id = ?');
-        $statement->execute([$payload['subject'], $payload['teacher'], $payload['room'], $payload['day'], $payload['startTime'], $payload['endTime'], $payload['id']]);
+        $statement = $db->prepare('UPDATE schedules SET subject = ?, instructor = ?, room = ?, day = ?, start_time = ?, end_time = ?, school_year = ? WHERE id = ?');
+        $statement->execute([$payload['subject'], $payload['teacher'], $payload['room'], $payload['day'], $payload['startTime'], $payload['endTime'], $schoolYear, $payload['id']]);
         audit($db, 'Updated schedule ' . $payload['subject']);
     } else {
-        $statement = $db->prepare('INSERT INTO schedules (subject, instructor, room, day, start_time, end_time) VALUES (?, ?, ?, ?, ?, ?)');
-        $statement->execute([$payload['subject'], $payload['teacher'], $payload['room'], $payload['day'], $payload['startTime'], $payload['endTime']]);
+        $statement = $db->prepare('INSERT INTO schedules (subject, instructor, room, day, start_time, end_time, school_year) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        $statement->execute([$payload['subject'], $payload['teacher'], $payload['room'], $payload['day'], $payload['startTime'], $payload['endTime'], $schoolYear]);
         audit($db, 'Added schedule ' . $payload['subject']);
     }
     reply(['message' => 'Schedule added.']);

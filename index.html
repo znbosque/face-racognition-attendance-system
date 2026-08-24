@@ -72,18 +72,25 @@
                     <div class="admin">
                         <button class="admin-btn" type="button" aria-expanded="false" aria-controls="menu" onclick="toggleMenu()">
                             <span class="admin-icon" aria-hidden="true">👤</span>
-                            <span>Admin</span>
                             <span class="caret" aria-hidden="true">▼</span>
                         </button>
 
                         <div class="dropdown" id="menu" role="menu">
-                            <a href="#">My Profile</a>
-                            <a href="#">Settings</a>
+                            <div class="account-menu-heading">Account</div>
+                            <a href="#" id="profileLink">My Profile</a>
+                            <a href="#" id="settingsLink">Account Settings</a>
+                            <div class="account-menu-divider"></div>
                             <a href="#" id="logoutLink">Logout</a>
                         </div>
                     </div>
                 </div>
             </header>
+
+            <section class="print-document-header" aria-hidden="true">
+                <div class="print-document-brand">DRLCEFI</div>
+                <h1 id="printDocumentTitle">Attendance Report</h1>
+                <p id="printDocumentSubtitle"></p>
+            </section>
 
             <main class="container">
                 <section id="homeView" class="view-section">
@@ -186,6 +193,25 @@
                     </section>
                 </section>
 
+                <section id="archiveDetailView" class="view-section" hidden>
+                    <div class="title archive-detail-heading">
+                        <div>
+                            <button class="back-link" type="button" onclick="closeArchivedYear()">← Back to archive years</button>
+                            <h1 id="archiveDetailTitle">Archived School Year</h1>
+                            <p id="archiveDetailSubtitle">Read-only records from this school year.</p>
+                        </div>
+                        <button class="tool-btn archive-report-print-button" type="button" onclick="printCurrentReport()" hidden>Print report</button>
+                    </div>
+                    <nav class="archive-category-tabs" aria-label="Archived data categories">
+                        <button type="button" class="archive-category-tab active" data-archive-category="students">Students</button>
+                        <button type="button" class="archive-category-tab" data-archive-category="attendance">Attendance</button>
+                        <button type="button" class="archive-category-tab" data-archive-category="schedule">Schedule</button>
+                        <button type="button" class="archive-category-tab" data-archive-category="report">Report</button>
+                        <button type="button" class="archive-category-tab" data-archive-category="overview">Overview</button>
+                    </nav>
+                    <div id="archiveDetailContent"></div>
+                </section>
+
                 <section id="attendanceView" class="view-section" hidden>
                     <div class="title">
                         <div class="attendance-heading">
@@ -274,6 +300,7 @@
                                 <summary class="tool-btn"><span aria-hidden="true">•••</span> More</summary>
                                 <div class="tool-popover"><button class="menu-item" type="button" onclick="exportReport()">Export CSV</button><button class="menu-item" type="button" onclick="window.print()">Print</button></div>
                             </details>
+                            <button class="tool-btn report-print-button" type="button" onclick="printCurrentReport()">Print report</button>
                             <button class="add-btn archive-school-year-btn" type="button" data-admin-only="true" onclick="openArchiveSchoolYearModal()">Archive</button>
                         </div>
                     </div>
@@ -626,6 +653,7 @@
                 <input type="text" id="subject" placeholder="Subject">
                 <input type="text" id="teacher" placeholder="Instructor">
                 <input type="text" id="room" placeholder="Room">
+                <input type="text" id="scheduleSchoolYear" placeholder="School year (e.g. 2026-2027)" inputmode="numeric" required>
                 <div class="form-row">
                     <div class="form-group">
                         <label for="day">Day</label>
@@ -723,6 +751,34 @@
                 <h2>Student Profile</h2>
                 <div id="profileDetails"></div>
                 <button class="close-btn" type="button" onclick="closeProfileModal()">Close</button>
+            </div>
+        </div>
+
+        <div class="modal" id="adminProfileModal" aria-hidden="true">
+            <div class="modal-content admin-profile-content">
+                <div class="modal-heading-row"><div><p class="modal-eyebrow">Account</p><h2>My Profile</h2></div><button class="modal-icon-close" type="button" aria-label="Close profile" onclick="closeAdminProfile()">×</button></div>
+                <div class="profile-photo-editor">
+                    <div class="admin-profile-photo" id="adminProfilePhotoPreview" aria-hidden="true">👤</div>
+                    <div><label class="upload-photo-button" for="adminProfilePhoto">Upload profile photo</label><input type="file" id="adminProfilePhoto" accept="image/jpeg,image/png,image/webp"><small>JPG, PNG, or WebP up to 2 MB.</small></div>
+                </div>
+                <div class="profile-form-grid">
+                    <label>Full name<input type="text" id="profileName" required></label>
+                    <label>Email address<input type="email" id="profileEmail" readonly></label>
+                    <label>Role<input type="text" id="profileRole" readonly></label>
+                </div>
+                <p class="settings-message" id="profileMessage" role="status"></p>
+                <button class="save-btn" type="button" onclick="saveAdminProfile()">Save profile</button>
+                <button class="close-btn" type="button" onclick="closeAdminProfile()">Cancel</button>
+            </div>
+        </div>
+
+        <div class="modal" id="settingsModal" aria-hidden="true">
+            <div class="modal-content settings-content">
+                <div class="modal-heading-row"><div><p class="modal-eyebrow">Account</p><h2>Account Settings</h2></div><button class="modal-icon-close" type="button" aria-label="Close account settings" onclick="closeSettings()">×</button></div>
+                <div class="settings-section"><h3>Account Settings</h3><p class="settings-description">Change the password used to sign in to the administrator account.</p><label class="setting-field">Current password<input type="password" id="settingsCurrentPassword" autocomplete="current-password" required></label><label class="setting-field">New password<input type="password" id="settingsNewPassword" minlength="6" autocomplete="new-password" required></label><label class="setting-field">Confirm new password<input type="password" id="settingsConfirmPassword" minlength="6" autocomplete="new-password" required></label><small class="settings-help">Use at least 6 characters. Your current password is required to confirm this change.</small></div>
+                <p class="settings-message" id="settingsMessage" role="status"></p>
+                <button class="save-btn" type="button" onclick="saveAdminSettings()">Change password</button>
+                <button class="close-btn" type="button" onclick="closeSettings()">Cancel</button>
             </div>
         </div>
 

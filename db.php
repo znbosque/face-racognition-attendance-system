@@ -17,8 +17,14 @@ try {
         email TEXT NOT NULL UNIQUE,
         password_hash TEXT NOT NULL,
         role TEXT NOT NULL DEFAULT "Administrator",
+        profile_image TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )');
+    try {
+        $db->exec('ALTER TABLE users ADD COLUMN profile_image TEXT');
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
     $db->exec('CREATE TABLE IF NOT EXISTS students (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         student_id TEXT NOT NULL UNIQUE,
@@ -60,8 +66,23 @@ try {
         day TEXT NOT NULL,
         start_time TEXT NOT NULL,
         end_time TEXT NOT NULL,
+        school_year TEXT NOT NULL DEFAULT \'2026-2027\',
+        is_archived INTEGER NOT NULL DEFAULT 0,
+        archived_school_year TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )');
+    foreach ([
+        "ALTER TABLE schedules ADD COLUMN school_year TEXT NOT NULL DEFAULT '2026-2027'",
+        'ALTER TABLE schedules ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0',
+        'ALTER TABLE schedules ADD COLUMN archived_school_year TEXT'
+    ] as $alterSchedule) {
+        try {
+            $db->exec($alterSchedule);
+        } catch (PDOException $error) {
+            // The column already exists on an initialized database.
+        }
+    }
+    $db->exec("UPDATE schedules SET school_year = COALESCE(archived_school_year, '2026-2027') WHERE school_year IS NULL OR school_year = ''");
     $db->exec('CREATE TABLE IF NOT EXISTS attendance (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         student_id TEXT NOT NULL,
@@ -72,7 +93,9 @@ try {
         time_in TEXT NOT NULL,
         time_out TEXT NOT NULL,
         status TEXT NOT NULL,
+        school_year TEXT NOT NULL DEFAULT \'2026-2027\',
         is_archived INTEGER NOT NULL DEFAULT 0,
+        archived_school_year TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
     )');
     $attendanceColumns = $db->query('PRAGMA table_info(attendance)')->fetchAll();
@@ -84,6 +107,17 @@ try {
         }
     }
     if (!$hasAttendanceArchiveColumn) $db->exec('ALTER TABLE attendance ADD COLUMN is_archived INTEGER NOT NULL DEFAULT 0');
+    try {
+        $db->exec("ALTER TABLE attendance ADD COLUMN school_year TEXT NOT NULL DEFAULT '2026-2027'");
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
+    try {
+        $db->exec('ALTER TABLE attendance ADD COLUMN archived_school_year TEXT');
+    } catch (PDOException $error) {
+        // The column already exists on an initialized database.
+    }
+    $db->exec("UPDATE attendance SET school_year = COALESCE(archived_school_year, '2026-2027') WHERE school_year IS NULL OR school_year = ''");
     $db->exec('CREATE TABLE IF NOT EXISTS audit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         action TEXT NOT NULL,

@@ -1,5 +1,11 @@
 const REMEMBER_KEY = 'drlcefiRememberedLogin';
+const SETTINGS_KEY = 'drlcefiDashboardSettings';
 let dashboardData = { students: [], schedules: [], attendance: [], audit: [], notificationSettings: {} };
+let archivedYear = '';
+let archivedCategory = 'students';
+let editingRow = null;
+let currentUser = null;
+let sessionTimer = null;
 
 function getSurname(name) {
     const parts = String(name).trim().split(/\s+/);
@@ -18,16 +24,18 @@ async function showApp(user) {
     document.getElementById('authScreen').hidden = true;
     document.getElementById('appShell').hidden = false;
     const welcomeTitle = document.getElementById('dashboard-title');
-    const adminName = document.querySelector('.admin-btn span:nth-child(2)');
+    currentUser = user || {};
     const displayName = user && user.name ? user.name : 'Administrator';
-    const role = user && user.role ? user.role : 'Administrator';
+    const role = currentUser.role || 'Administrator';
 
     if (welcomeTitle) {
         welcomeTitle.textContent = `Welcome, ${displayName}!`;
     }
-    if (adminName) {
-        adminName.textContent = `${displayName} (${role})`;
-    }
+    updateAdminIdentity();
+    const dashboardSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    document.body.classList.toggle('compact-tables', dashboardSettings.compactTables === true);
+    applySystemSettings(dashboardSettings);
+    resetSessionTimer();
     document.getElementById('appShell').dataset.role = role;
     applyRolePermissions(role);
     await loadDashboardData();
@@ -37,6 +45,31 @@ function escapeHtml(value) {
     return String(value).replace(/[&<>'"]/g, function (character) {
         return { '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character];
     });
+}
+
+function statusClass(value) {
+    const status = String(value).toLowerCase();
+    if (status.includes('absent') || status.includes('risk') || status.includes('danger')) return 'danger';
+    if (status.includes('late') || status.includes('warning')) return 'warning';
+    return 'good';
+}
+
+function statusBadge(value) {
+    return `<span class="status-indicator ${statusClass(value)}">${escapeHtml(value)}</span>`;
+}
+
+function updateAdminIdentity() {
+    const icon = document.querySelector('.admin-icon');
+    if (!icon) return;
+    if (currentUser && currentUser.profileImage) {
+        icon.textContent = '';
+        icon.style.backgroundImage = `url("${currentUser.profileImage}")`;
+        icon.classList.add('has-profile-image');
+    } else {
+        icon.textContent = '👤';
+        icon.style.backgroundImage = '';
+        icon.classList.remove('has-profile-image');
+    }
 }
 
 async function loadDashboardData() {
@@ -52,7 +85,7 @@ async function loadDashboardData() {
             return `<tr data-student-status="${archived ? 'archived' : 'active'}">
                 <td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td>
                 <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${escapeHtml(student.school_year || 'Unassigned')}</td>
-                <td>${escapeHtml(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td></tr>`;
+                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td></tr>`;
         }).join('');
         filterStudents();
         renderArchivedStudents();
@@ -60,7 +93,7 @@ async function loadDashboardData() {
     const attendanceBody = document.getElementById('attendanceTableBody');
     if (attendanceBody) {
         attendanceBody.innerHTML = dashboardData.attendance.map(function (record) {
-            return `<tr data-course="${escapeHtml(record.course)}" data-attendance-date="${attendanceDateKey(record.attendance_date)}" data-attendance-archived="${Number(record.is_archived) === 1}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${escapeHtml(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
+            return `<tr data-course="${escapeHtml(record.course)}" data-attendance-date="${attendanceDateKey(record.attendance_date)}" data-attendance-archived="${Number(record.is_archived) === 1}"><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${statusBadge(record.status)}</td><td><details class="row-menu"><summary aria-label="Attendance actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button">View</button></div></details></td></tr>`;
         }).join('');
         getAttendanceRows().forEach(function (row) { row.dataset.matchesFilter = 'true'; });
         renderAttendanceDateControls();
@@ -69,15 +102,17 @@ async function loadDashboardData() {
     const scheduleBody = document.getElementById('scheduleTableBody');
     if (scheduleBody) {
         scheduleBody.innerHTML = dashboardData.schedules.map(function (schedule) {
-            return `<tr data-schedule-id="${escapeHtml(schedule.id)}"><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td><td><details class="row-menu"><summary aria-label="Schedule actions">•••</summary><div class="row-menu__content"><button class="menu-item edit-btn" type="button" onclick="editRow(this)">Edit</button><button class="menu-item delete-btn" type="button" onclick="openDeleteModal(this)">Delete</button></div></details></td></tr>`;
+            return `<tr data-schedule-id="${escapeHtml(schedule.id)}" data-school-year="${escapeHtml(schedule.school_year || '2026-2027')}"><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td><td><details class="row-menu"><summary aria-label="Schedule actions">•••</summary><div class="row-menu__content"><button class="menu-item edit-btn" type="button" onclick="editRow(this)">Edit</button><button class="menu-item delete-btn" type="button" onclick="openDeleteModal(this)">Delete</button></div></details></td></tr>`;
         }).join('');
         applyScheduleFilters();
     }
     renderAuditLog();
     renderAttendanceHistory();
     updateOverviewStats();
+    if (archivedYear) renderArchivedCategory();
     loadNotificationSettingsFromData();
     applyRolePermissions(document.getElementById('appShell').dataset.role || 'Administrator');
+    applySavedDashboardView();
 }
 
 function showAuth() {
@@ -173,6 +208,17 @@ async function initializeAuth() {
             document.getElementById('loginForm').reset();
         });
     });
+
+    document.getElementById('profileLink').addEventListener('click', function (event) {
+        event.preventDefault();
+        closeAccountMenu();
+        openAdminProfile();
+    });
+    document.getElementById('settingsLink').addEventListener('click', function (event) {
+        event.preventDefault();
+        closeAccountMenu();
+        openSettings();
+    });
 }
 
 initializeAuth().catch(function () {
@@ -191,6 +237,54 @@ function toggleMenu() {
         const isExpanded = button.getAttribute('aria-expanded') === 'true';
         button.setAttribute('aria-expanded', String(!isExpanded));
     }
+}
+
+function closeAccountMenu() {
+    const menu = document.getElementById('menu');
+    const button = document.querySelector('.admin-btn');
+    if (menu) menu.classList.remove('show');
+    if (button) button.setAttribute('aria-expanded', 'false');
+}
+
+function openAdminProfile() {
+    document.getElementById('profileName').value = currentUser.name || '';
+    document.getElementById('profileEmail').value = currentUser.email || '';
+    document.getElementById('profileRole').value = currentUser.role || 'Administrator';
+    renderProfilePreview(currentUser.profileImage);
+    document.getElementById('profileMessage').textContent = '';
+    const modal = document.getElementById('adminProfileModal');
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeAdminProfile() {
+    const modal = document.getElementById('adminProfileModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function renderProfilePreview(image) {
+    const preview = document.getElementById('adminProfilePhotoPreview');
+    if (!preview) return;
+    preview.textContent = image ? '' : '👤';
+    preview.style.backgroundImage = image ? `url("${image}")` : '';
+    preview.classList.toggle('has-profile-image', Boolean(image));
+}
+
+function openSettings() {
+    document.getElementById('settingsCurrentPassword').value = '';
+    document.getElementById('settingsNewPassword').value = '';
+    document.getElementById('settingsConfirmPassword').value = '';
+    document.getElementById('settingsMessage').textContent = '';
+    const modal = document.getElementById('settingsModal');
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeSettings() {
+    const modal = document.getElementById('settingsModal');
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
 }
 
 function toggleToolMenu(menuId, button) {
@@ -233,6 +327,11 @@ document.querySelectorAll('.nav-link').forEach(function (link) {
         this.classList.add('active');
 
         const target = this.dataset.view;
+        const dashboardSettings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+        if (dashboardSettings.rememberView !== false) {
+            dashboardSettings.lastView = target;
+            localStorage.setItem(SETTINGS_KEY, JSON.stringify(dashboardSettings));
+        }
         document.getElementById('homeView').hidden = target !== 'home';
         document.getElementById('scheduleView').hidden = target !== 'schedule';
         document.getElementById('attendanceView').hidden = target !== 'attendance';
@@ -240,6 +339,7 @@ document.querySelectorAll('.nav-link').forEach(function (link) {
         document.getElementById('overviewView').hidden = target !== 'overview';
         document.getElementById('historyView').hidden = target !== 'history';
         document.getElementById('archiveView').hidden = target !== 'archives';
+        document.getElementById('archiveDetailView').hidden = true;
     });
 });
 
@@ -362,6 +462,7 @@ async function confirmAttendanceArchive() {
         alert('Choose the following year in the To box, such as 2027 for 2026 - 2027.');
         return;
     }
+    if (!shouldConfirmArchive()) return;
     try {
         await requestApi('archive-attendance-date', { method: 'POST', body: JSON.stringify({ date: attendanceState.selectedDate, schoolYear: `${startYear}-${endYear}` }) });
         closeAttendanceArchiveModal();
@@ -621,6 +722,7 @@ async function confirmArchiveSchoolYear() {
         return;
     }
     const schoolYear = `${startYear}-${endYear}`;
+    if (!shouldConfirmArchive()) return;
     try {
         await requestApi('archive-year', { method: 'POST', body: JSON.stringify({ schoolYear: schoolYear }) });
         closeArchiveSchoolYearModal();
@@ -628,6 +730,11 @@ async function confirmArchiveSchoolYear() {
     } catch (error) {
         alert(error.message);
     }
+}
+
+function shouldConfirmArchive() {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    return settings.confirmArchive === false || window.confirm('Archive these records? You can restore them later from Archives.');
 }
 
 function initializeStudentTools() {
@@ -665,15 +772,164 @@ function renderArchivedStudents() {
         const courses = Array.from(new Set(students.map(function (student) { return student.course; }))).sort().join(', ');
         const names = students.map(function (student) { return student.full_name; }).join(' ');
         return `<tr data-archive-year="${escapeHtml(year)}" data-archive-search="${escapeHtml(year + ' ' + courses + ' ' + names)}">
-            <td>${escapeHtml(year)}</td><td>${students.length} students</td><td>${escapeHtml(courses)}</td>
+            <td><button class="archive-year-link" type="button" onclick="openArchivedYear('${escapeHtml(year)}')">${escapeHtml(year)}</button></td><td>${students.length} students</td><td>${escapeHtml(courses)}</td>
             <td><details class="row-menu"><summary aria-label="Archived school year actions">•••</summary><div class="row-menu__content"><button class="menu-item archive-action restore-action" type="button" onclick="restoreArchivedYear(this)">Restore school year</button></div></details></td>
         </tr>`;
     }).join('');
     filterArchivedStudents();
 }
 
+function getArchivedYearData(year) {
+    const students = (dashboardData.students || []).filter(function (student) {
+        return Number(student.is_archived) === 1 && (student.archived_school_year || 'Unassigned') === year;
+    });
+    const studentIds = new Set(students.map(function (student) { return student.student_id; }));
+    return {
+        students: students,
+        attendance: (dashboardData.attendance || []).filter(function (record) {
+            return record.school_year === year || record.archived_school_year === year || studentIds.has(record.student_id);
+        }),
+        schedules: (dashboardData.schedules || []).filter(function (schedule) {
+            return schedule.school_year === year || schedule.archived_school_year === year;
+        })
+    };
+}
+
+function openArchivedYear(year) {
+    archivedYear = year;
+    archivedCategory = 'students';
+    document.getElementById('archiveView').hidden = true;
+    document.getElementById('archiveDetailView').hidden = false;
+    document.querySelectorAll('.nav-link').forEach(function (link) { link.classList.remove('active'); });
+    document.querySelector('[data-view="archives"]').classList.add('active');
+    document.getElementById('archiveDetailTitle').textContent = `Archived School Year ${year}`;
+    renderArchivedCategory();
+}
+
+function closeArchivedYear() {
+    archivedYear = '';
+    document.getElementById('archiveDetailView').hidden = true;
+    document.getElementById('archiveView').hidden = false;
+}
+
+function archivedTable(title, headers, rows) {
+    const body = rows || `<tr><td colspan="${headers.length}">No records found for this school year.</td></tr>`;
+    return `<section class="table-container archive-detail-panel"><h2>${title}</h2><table><thead><tr>${headers.map(function (header) { return `<th scope="col">${header}</th>`; }).join('')}</tr></thead><tbody>${body}</tbody></table></section>`;
+}
+
+function renderArchivedCategory() {
+    const content = document.getElementById('archiveDetailContent');
+    const data = getArchivedYearData(archivedYear);
+    if (!content) return;
+    const archivePrintButton = document.querySelector('.archive-report-print-button');
+    if (archivePrintButton) archivePrintButton.hidden = archivedCategory !== 'report';
+    document.querySelectorAll('.archive-category-tab').forEach(function (tab) { tab.classList.toggle('active', tab.dataset.archiveCategory === archivedCategory); });
+    if (archivedCategory === 'students') {
+        content.innerHTML = archivedTable('Students', ['ID', 'Student Name', 'Course', 'Year', 'Status'], data.students.map(function (student) {
+            return `<tr><td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td><td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${statusBadge(student.status)}</td></tr>`;
+        }).join(''));
+    } else if (archivedCategory === 'attendance') {
+        content.innerHTML = archivedTable('Attendance', ['Student ID', 'Student Name', 'Date', 'Subject', 'Time In', 'Time Out', 'Status'], data.attendance.map(function (record) {
+            return `<tr><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${statusBadge(record.status)}</td></tr>`;
+        }).join(''));
+    } else if (archivedCategory === 'schedule') {
+        content.innerHTML = archivedTable('Schedule', ['Subject', 'Instructor', 'Room', 'Day', 'Time'], data.schedules.map(function (schedule) {
+            return `<tr><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td></tr>`;
+        }).join(''));
+    } else if (archivedCategory === 'report') {
+        renderArchivedReport(content, data);
+    } else {
+        renderArchivedOverview(content, data);
+    }
+}
+
+function printCurrentReport() {
+    const isArchiveReport = !document.getElementById('archiveDetailView').hidden && archivedCategory === 'report';
+    document.body.dataset.printView = isArchiveReport ? 'archive-report' : 'report';
+    const printTitle = document.getElementById('printDocumentTitle');
+    const printSubtitle = document.getElementById('printDocumentSubtitle');
+    if (printTitle) printTitle.textContent = isArchiveReport ? `Archived Attendance Report: ${archivedYear}` : 'Attendance Report';
+    if (printSubtitle) printSubtitle.textContent = `DRLCEFI | Generated ${new Date().toLocaleString()}`;
+    window.addEventListener('afterprint', function clearPrintView() {
+        delete document.body.dataset.printView;
+        window.removeEventListener('afterprint', clearPrintView);
+    });
+    window.print();
+}
+
+function renderArchivedReport(content, data) {
+    const recordsByStudent = {};
+    data.attendance.forEach(function (record) {
+        if (!recordsByStudent[record.student_id]) recordsByStudent[record.student_id] = { Present: 0, Late: 0, Absent: 0 };
+        recordsByStudent[record.student_id][record.status] = (recordsByStudent[record.student_id][record.status] || 0) + 1;
+    });
+    const rows = data.students.map(function (student) {
+        const counts = recordsByStudent[student.student_id] || { Present: 0, Late: 0, Absent: 0 };
+        const total = counts.Present + counts.Late + counts.Absent;
+        const percentage = total ? Math.round(((counts.Present + counts.Late) / total) * 100) : 0;
+        const standing = percentage < 80 ? 'At Risk' : percentage < 90 ? 'Warning' : 'Good Standing';
+        return `<tr><td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td><td>${counts.Present}</td><td>${counts.Late}</td><td>${counts.Absent}</td><td>${percentage}%</td><td>${statusBadge(standing)}</td></tr>`;
+    }).join('');
+    const warningCount = data.students.filter(function (student) {
+        const counts = recordsByStudent[student.student_id] || { Present: 0, Late: 0, Absent: 0 };
+        const total = counts.Present + counts.Late + counts.Absent;
+        return total && ((counts.Present + counts.Late) / total) < 0.9;
+    }).length;
+    const riskCount = data.students.filter(function (student) {
+        const counts = recordsByStudent[student.student_id] || { Present: 0, Late: 0, Absent: 0 };
+        const total = counts.Present + counts.Late + counts.Absent;
+        return total && ((counts.Present + counts.Late) / total) < 0.8;
+    }).length;
+    content.innerHTML = `<div class="summary archive-report-summary"><div class="card"><h2>Total Students</h2><p>${data.students.length}</p></div><div class="card"><h2>Students with Warning</h2><p>${warningCount}</p></div><div class="card"><h2>Students at Risk</h2><p>${riskCount}</p></div></div>${archivedTable('Attendance Report', ['Student ID', 'Name', 'Present', 'Late', 'Absent', 'Attendance %', 'Status'], rows)}`;
+}
+
+function renderArchivedOverview(content, data) {
+    const timestamps = data.attendance.map(function (record) { return new Date(record.attendance_date).getTime(); }).filter(Number.isFinite);
+    const latest = timestamps.length ? Math.max.apply(null, timestamps) : Date.now();
+    const latestDate = new Date(latest);
+    const periods = { Daily: 1, Weekly: 7, Monthly: 31 };
+    const periodCards = Object.keys(periods).map(function (label) {
+        const start = new Date(latestDate);
+        start.setDate(start.getDate() - periods[label] + 1);
+        const records = data.attendance.filter(function (record) {
+            const timestamp = new Date(record.attendance_date).getTime();
+            return Number.isFinite(timestamp) && timestamp >= start.getTime() && timestamp <= latest;
+        });
+        const present = records.filter(function (record) { return record.status === 'Present' || record.status === 'Late'; }).length;
+        const rate = records.length ? Math.round((present / records.length) * 100) : 0;
+        return `<div class="card"><h2>${label} Attendance</h2><p>${rate}%</p><small>${present} of ${records.length} records present or late</small></div>`;
+    }).join('');
+    const present = data.attendance.filter(function (record) { return record.status === 'Present'; }).length;
+    const late = data.attendance.filter(function (record) { return record.status === 'Late'; }).length;
+    const absent = data.attendance.filter(function (record) { return record.status === 'Absent'; }).length;
+    const total = present + late + absent;
+    const rate = total ? Math.round(((present + late) / total) * 100) : 0;
+    content.innerHTML = `<div class="summary archive-overview-summary"><div class="card"><h2>Total Students</h2><p>${data.students.length}</p></div><div class="card"><h2>Present</h2><p>${present}</p></div><div class="card"><h2>Late</h2><p>${late}</p></div><div class="card"><h2>Absent</h2><p>${absent}</p></div><div class="card"><h2>Attendance Records</h2><p>${total}</p></div><div class="card"><h2>Schedules</h2><p>${data.schedules.length}</p></div><div class="card"><h2>Attendance Rate</h2><p>${rate}%</p></div>${periodCards}</div><p class="overview-updated">Overview calculated from all archived records for ${escapeHtml(archivedYear)}.</p>`;
+}
+
+document.querySelectorAll('.archive-category-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+        archivedCategory = tab.dataset.archiveCategory;
+        renderArchivedCategory();
+    });
+});
+
 async function restoreArchivedYear(button) {
     const schoolYear = button.closest('tr').dataset.archiveYear;
+    try {
+        await requestApi('restore-year', { method: 'POST', body: JSON.stringify({ schoolYear: schoolYear }) });
+        await loadDashboardData();
+    } catch (error) {
+        alert(error.message);
+    }
+}
+
+async function restoreSelectedSchoolYear() {
+    const schoolYear = document.getElementById('archiveSchoolYearFilter')?.value || '';
+    if (!schoolYear) {
+        alert('Select a school year first.');
+        return;
+    }
     try {
         await requestApi('restore-year', { method: 'POST', body: JSON.stringify({ schoolYear: schoolYear }) });
         await loadDashboardData();
@@ -797,6 +1053,92 @@ function loadNotificationSettings() {
 }
 
 function loadNotificationSettingsFromData() { loadNotificationSettings(); }
+
+document.getElementById('adminProfilePhoto')?.addEventListener('change', async function () {
+    const file = this.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+        this.value = '';
+        document.getElementById('profileMessage').textContent = 'The profile photo must be 2 MB or smaller.';
+        return;
+    }
+    try {
+        renderProfilePreview(await readFacePhoto(file));
+        document.getElementById('profileMessage').textContent = '';
+    } catch (error) {
+        document.getElementById('profileMessage').textContent = error.message;
+    }
+});
+
+async function saveAdminProfile() {
+    const name = document.getElementById('profileName').value.trim();
+    const file = document.getElementById('adminProfilePhoto').files[0];
+    if (!name) {
+        document.getElementById('profileMessage').textContent = 'Enter your full name.';
+        return;
+    }
+    try {
+        const profileImage = file ? await readFacePhoto(file) : currentUser.profileImage || '';
+        const data = await requestApi('profile', { method: 'POST', body: JSON.stringify({ name, profileImage }) });
+        currentUser = data.user;
+        updateAdminIdentity();
+        document.getElementById('profileMessage').textContent = 'Profile saved successfully.';
+        document.querySelector('.welcome h1, #dashboard-title').textContent = `Welcome, ${name}!`;
+        setTimeout(closeAdminProfile, 500);
+    } catch (error) {
+        document.getElementById('profileMessage').textContent = error.message;
+    }
+}
+
+async function saveAdminSettings() {
+    const currentPassword = document.getElementById('settingsCurrentPassword').value;
+    const newPassword = document.getElementById('settingsNewPassword').value;
+    const confirmPassword = document.getElementById('settingsConfirmPassword').value;
+    if (!currentPassword || newPassword.length < 6 || newPassword !== confirmPassword) {
+        document.getElementById('settingsMessage').textContent = 'Enter the current password and matching new password (6+ characters).';
+        return;
+    }
+    try {
+        await requestApi('password', { method: 'POST', body: JSON.stringify({ currentPassword, newPassword }) });
+        document.getElementById('settingsMessage').textContent = 'Settings saved successfully.';
+        setTimeout(closeSettings, 500);
+    } catch (error) {
+        document.getElementById('settingsMessage').textContent = error.message;
+    }
+}
+
+function applySystemSettings(settings) {
+    const logo = document.querySelector('.logo');
+    if (logo) {
+        logo.textContent = settings.schoolName || 'DRLCEFI';
+        logo.style.backgroundImage = '';
+        logo.classList.remove('has-school-logo');
+    }
+}
+
+function resetSessionTimer() {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    if (sessionTimer) clearTimeout(sessionTimer);
+    if (!settings.sessionTimeout || !currentUser) return;
+    sessionTimer = setTimeout(function () {
+        requestApi('logout', { method: 'POST' }).finally(function () { currentUser = null; showAuth(); });
+    }, settings.sessionTimeout * 60 * 1000);
+}
+
+['click', 'keydown', 'mousemove'].forEach(function (eventName) {
+    document.addEventListener(eventName, function () {
+        if (!document.getElementById('appShell').hidden) resetSessionTimer();
+    });
+});
+
+function applySavedDashboardView() {
+    const settings = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    if (!settings.rememberView || archivedYear) return;
+    const view = settings.lastView || settings.defaultView;
+    if (!view) return;
+    const link = document.querySelector(`[data-view="${view}"]`);
+    if (link && !link.classList.contains('active')) link.click();
+}
 
 function updateOverviewStats() {
     const rows = Array.from(document.querySelectorAll('#attendanceTableBody tr'));
@@ -935,6 +1277,15 @@ function openStudentModal() {
     }
 }
 
+function openModal() {
+    const modal = document.getElementById('modal');
+    editingRow = null;
+    document.getElementById('modalTitle').textContent = 'Add Schedule';
+    document.getElementById('saveScheduleBtn').textContent = 'Save Schedule';
+    document.getElementById('scheduleSchoolYear').value = `${new Date().getFullYear()}-${new Date().getFullYear() + 1}`;
+    if (modal) modal.style.display = 'flex';
+}
+
 function clearForm() {
     document.getElementById('subject').value = '';
     document.getElementById('teacher').value = '';
@@ -942,6 +1293,7 @@ function clearForm() {
     document.getElementById('day').value = '';
     document.getElementById('startTime').value = '';
     document.getElementById('endTime').value = '';
+    document.getElementById('scheduleSchoolYear').value = '';
 }
 
 function clearStudentForm() {
@@ -1035,9 +1387,14 @@ async function addSchedule() {
     const day = document.getElementById('day').value.trim();
     const startTime = document.getElementById('startTime').value.trim();
     const endTime = document.getElementById('endTime').value.trim();
+    const schoolYear = document.getElementById('scheduleSchoolYear').value.trim();
 
-    if (!subject || !teacher || !room || !day || !startTime || !endTime) {
+    if (!subject || !teacher || !room || !day || !startTime || !endTime || !schoolYear) {
         alert('Please complete all fields.');
+        return;
+    }
+    if (!/^\d{4}-\d{4}$/.test(schoolYear) || Number(schoolYear.slice(5)) !== Number(schoolYear.slice(0, 4)) + 1) {
+        alert('Enter consecutive school years, such as 2026-2027.');
         return;
     }
 
@@ -1047,7 +1404,7 @@ async function addSchedule() {
     }
 
     try {
-        await requestApi('schedule', { method: 'POST', body: JSON.stringify({ id: editingRow?.dataset.scheduleId, subject, teacher, room, day, startTime, endTime }) });
+        await requestApi('schedule', { method: 'POST', body: JSON.stringify({ id: editingRow?.dataset.scheduleId, subject, teacher, room, day, startTime, endTime, schoolYear }) });
         closeModal();
         clearForm();
         editingRow = null;
@@ -1073,6 +1430,7 @@ function editRow(button) {
     const [startTime, endTime] = timeText.split(' - ');
     document.getElementById('startTime').value = startTime || '';
     document.getElementById('endTime').value = endTime || '';
+    document.getElementById('scheduleSchoolYear').value = row.dataset.schoolYear || '2026-2027';
 
     const modal = document.getElementById('modal');
     if (modal) {
