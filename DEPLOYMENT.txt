@@ -6,6 +6,8 @@ For the non-technical user:
 2. The attendance system opens in the browser at http://127.0.0.1:8080.
 3. When finished, double-click "Stop Attendance.vbs".
 
+When the project is updated on GitHub, download or pull the latest version before starting it. If an older copy is already running, double-click "Stop Attendance.vbs" from that older folder first, then start the updated copy.
+
 The database is the file "attendance.sqlite" in this folder. Keep it in the same folder as api.php and db.php. Face photos are stored in the "face_images" folder; keep that folder with the database when transferring or backing up the app. Back up the database and face_images folder while the app is stopped.
 
 The portable PHP runtime is already included in this folder:

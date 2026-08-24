@@ -37,7 +37,7 @@ If Not serverReady Then
     WScript.Sleep 1500
 End If
 
-shell.Run "http://127.0.0.1:8080/index.html", 1, False
+shell.Run "http://127.0.0.1:8080/index.html?v=" & Replace(CStr(Timer), ".", ""), 1, False
 Set http = Nothing
 Set startup = Nothing
 Set wmi = Nothing
