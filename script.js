@@ -102,7 +102,7 @@ async function loadDashboardData() {
     const scheduleBody = document.getElementById('scheduleTableBody');
     if (scheduleBody) {
         scheduleBody.innerHTML = dashboardData.schedules.map(function (schedule) {
-            return `<tr data-schedule-id="${escapeHtml(schedule.id)}" data-school-year="${escapeHtml(schedule.school_year || '2026-2027')}"><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td><td><details class="row-menu"><summary aria-label="Schedule actions">•••</summary><div class="row-menu__content"><button class="menu-item edit-btn" type="button" onclick="editRow(this)">Edit</button><button class="menu-item delete-btn" type="button" onclick="openDeleteModal(this)">Delete</button></div></details></td></tr>`;
+            return `<tr data-schedule-id="${escapeHtml(schedule.id)}" data-school-year="${escapeHtml(schedule.school_year || '2026-2027')}"><td>${escapeHtml(schedule.school_year || '2026-2027')}</td><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td><td><details class="row-menu"><summary aria-label="Schedule actions">•••</summary><div class="row-menu__content"><button class="menu-item edit-btn" type="button" onclick="editRow(this)">Edit</button><button class="menu-item delete-btn" type="button" onclick="openDeleteModal(this)">Delete</button></div></details></td></tr>`;
         }).join('');
         applyScheduleFilters();
     }
@@ -833,8 +833,8 @@ function renderArchivedCategory() {
             return `<tr><td>${escapeHtml(record.student_id)}</td><td>${escapeHtml(record.student_name)}</td><td>${escapeHtml(record.attendance_date)}</td><td>${escapeHtml(record.subject)}</td><td>${escapeHtml(record.time_in)}</td><td>${escapeHtml(record.time_out)}</td><td>${statusBadge(record.status)}</td></tr>`;
         }).join(''));
     } else if (archivedCategory === 'schedule') {
-        content.innerHTML = archivedTable('Schedule', ['Subject', 'Instructor', 'Room', 'Day', 'Time'], data.schedules.map(function (schedule) {
-            return `<tr><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td></tr>`;
+        content.innerHTML = archivedTable('Schedule', ['School Year', 'Subject', 'Instructor', 'Room', 'Day', 'Time'], data.schedules.map(function (schedule) {
+            return `<tr><td>${escapeHtml(schedule.school_year || schedule.archived_school_year || archivedYear)}</td><td>${escapeHtml(schedule.subject)}</td><td>${escapeHtml(schedule.instructor)}</td><td>${escapeHtml(schedule.room)}</td><td>${escapeHtml(schedule.day)}</td><td>${escapeHtml(schedule.start_time)} - ${escapeHtml(schedule.end_time)}</td></tr>`;
         }).join(''));
     } else if (archivedCategory === 'report') {
         renderArchivedReport(content, data);
@@ -1191,10 +1191,10 @@ function applyScheduleFilters() {
     const subject = document.getElementById('scheduleSubjectFilter').value.trim().toLowerCase();
     const room = document.getElementById('scheduleRoomFilter').value.trim().toLowerCase();
     document.querySelectorAll('#scheduleTableBody tr').forEach(function (row) {
-        row.hidden = (day && !row.cells[3].textContent.toLowerCase().includes(day))
-            || (instructor && !row.cells[1].textContent.toLowerCase().includes(instructor))
-            || (subject && !row.cells[0].textContent.toLowerCase().includes(subject))
-            || (room && !row.cells[2].textContent.toLowerCase().includes(room));
+        row.hidden = (day && !row.cells[4].textContent.toLowerCase().includes(day))
+            || (instructor && !row.cells[2].textContent.toLowerCase().includes(instructor))
+            || (subject && !row.cells[1].textContent.toLowerCase().includes(subject))
+            || (room && !row.cells[3].textContent.toLowerCase().includes(room));
     });
 }
 
@@ -1223,10 +1223,10 @@ function hasScheduleConflict(day, room, startTime, endTime, ignoredRow) {
     const start = timeToMinutes(startTime);
     const end = timeToMinutes(endTime);
     return Array.from(document.querySelectorAll('#scheduleTableBody tr')).some(function (row) {
-        if (row === ignoredRow || row.hidden || row.cells[3].textContent.trim() !== day || row.cells[2].textContent.trim().toLowerCase() !== room.toLowerCase()) {
+        if (row === ignoredRow || row.hidden || row.cells[4].textContent.trim() !== day || row.cells[3].textContent.trim().toLowerCase() !== room.toLowerCase()) {
             return false;
         }
-        const existingTimes = row.cells[4].textContent.split(' - ');
+        const existingTimes = row.cells[5].textContent.split(' - ');
         const existingStart = timeToMinutes(existingTimes[0]);
         const existingEnd = timeToMinutes(existingTimes[1]);
         return start !== null && end !== null && existingStart !== null && existingEnd !== null && start < existingEnd && end > existingStart;
@@ -1421,12 +1421,13 @@ function editRow(button) {
     document.getElementById('modalTitle').textContent = 'Edit Schedule';
     document.getElementById('saveScheduleBtn').textContent = 'Update Schedule';
 
-    document.getElementById('subject').value = row.cells[0].textContent;
-    document.getElementById('teacher').value = row.cells[1].textContent;
-    document.getElementById('room').value = row.cells[2].textContent;
-    document.getElementById('day').value = row.cells[3].textContent;
+    document.getElementById('scheduleSchoolYear').value = row.cells[0].textContent;
+    document.getElementById('subject').value = row.cells[1].textContent;
+    document.getElementById('teacher').value = row.cells[2].textContent;
+    document.getElementById('room').value = row.cells[3].textContent;
+    document.getElementById('day').value = row.cells[4].textContent;
 
-    const timeText = row.cells[4].textContent;
+    const timeText = row.cells[5].textContent;
     const [startTime, endTime] = timeText.split(' - ');
     document.getElementById('startTime').value = startTime || '';
     document.getElementById('endTime').value = endTime || '';
