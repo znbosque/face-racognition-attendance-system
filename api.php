@@ -9,6 +9,65 @@ function data(): array { $value = json_decode(file_get_contents('php://input'), 
 function reply(array $value, int $status = 200): never { http_response_code($status); echo json_encode($value); exit; }
 function user(): array { return $_SESSION['user'] ?? []; }
 function requireLogin(): void { if (!user()) reply(['message' => 'Login required.'], 401); }
+function sendVerificationEmail(string $recipient, string $code): bool {
+    $configPath = __DIR__ . DIRECTORY_SEPARATOR . 'mail-config.php';
+    $config = is_file($configPath) ? require $configPath : [];
+    if (!is_array($config) || empty($config['host']) || empty($config['username']) || empty($config['password'])) {
+        return false;
+    }
+
+    $host = (string) $config['host'];
+    $port = (int) ($config['port'] ?? 587);
+    $encryption = strtolower((string) ($config['encryption'] ?? 'tls'));
+    $from = (string) ($config['from'] ?? $config['username']);
+    $fromName = (string) ($config['from_name'] ?? 'DRLCEFI Attendance');
+    $remote = ($encryption === 'ssl' ? 'ssl://' : '') . $host . ':' . $port;
+    $context = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+    $socket = @stream_socket_client($remote, $errorNumber, $errorMessage, 15, STREAM_CLIENT_CONNECT, $context);
+    if (!$socket) return false;
+    stream_set_timeout($socket, 15);
+
+    $read = static function () use ($socket): string {
+        $response = '';
+        while (($line = fgets($socket, 515)) !== false) {
+            $response .= $line;
+            if (strlen($line) < 4 || $line[3] === ' ') break;
+        }
+        return $response;
+    };
+    $write = static function (string $command) use ($socket, $read): bool {
+        fwrite($socket, $command . "\r\n");
+        return (int) substr($read(), 0, 3) < 400;
+    };
+
+    $ready = (int) substr($read(), 0, 3) < 400;
+    $ready = $ready && $write('EHLO localhost');
+    if ($ready && $encryption === 'tls') {
+        $ready = $write('STARTTLS') && @stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+        $ready = $ready && $write('EHLO localhost');
+    }
+    $ready = $ready && $write('AUTH LOGIN');
+    $ready = $ready && $write(base64_encode((string) $config['username']));
+    $ready = $ready && $write(base64_encode((string) $config['password']));
+    $ready = $ready && $write('MAIL FROM:<' . $from . '>');
+    $ready = $ready && $write('RCPT TO:<' . $recipient . '>');
+    $ready = $ready && $write('DATA');
+    if ($ready) {
+        $subject = 'DRLCEFI password reset verification code';
+        $body = "Your DRLCEFI verification code is: {$code}\r\n\r\nThis code expires in 15 minutes. If you did not request a password reset, you can ignore this email.";
+        $message = 'From: ' . $fromName . ' <' . $from . ">\r\n"
+            . 'To: <' . $recipient . ">\r\n"
+            . 'Subject: ' . $subject . "\r\n"
+            . "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"
+            . $body;
+        $message = preg_replace('/^\./m', '..', $message) . "\r\n.";
+        fwrite($socket, $message . "\r\n");
+        $ready = (int) substr($read(), 0, 3) < 400;
+    }
+    $write('QUIT');
+    fclose($socket);
+    return $ready;
+}
 function audit(PDO $db, string $action): void {
     $actor = user()['name'] ?? 'System';
     $statement = $db->prepare('INSERT INTO audit_logs (action, actor) VALUES (?, ?)');
@@ -38,10 +97,24 @@ if ($method === 'POST' && $action === 'signup') {
 }
 
 if ($method === 'POST' && $action === 'login') {
+    $lockoutUntil = (int) ($_SESSION['login_lockout_until'] ?? 0);
+    if ($lockoutUntil > time()) reply(['message' => 'Too many failed attempts. Try again in 1 minute.', 'retryAfter' => $lockoutUntil - time()], 429);
+    if ($lockoutUntil > 0) unset($_SESSION['login_lockout_until'], $_SESSION['login_failed_attempts']);
+
     $statement = $db->prepare('SELECT id, name, email, role, password_hash, profile_image FROM users WHERE email = ? LIMIT 1');
     $statement->execute([strtolower(trim((string) ($payload['email'] ?? '')))]);
     $record = $statement->fetch();
-    if (!$record || !password_verify((string) ($payload['password'] ?? ''), $record['password_hash'])) reply(['message' => 'Incorrect email or password.'], 401);
+    if (!$record || !password_verify((string) ($payload['password'] ?? ''), $record['password_hash'])) {
+        $failedAttempts = (int) ($_SESSION['login_failed_attempts'] ?? 0) + 1;
+        if ($failedAttempts >= 3) {
+            $_SESSION['login_failed_attempts'] = 0;
+            $_SESSION['login_lockout_until'] = time() + 60;
+            reply(['message' => 'Too many failed attempts. Try again in 1 minute.', 'retryAfter' => 60], 429);
+        }
+        $_SESSION['login_failed_attempts'] = $failedAttempts;
+        reply(['message' => 'Incorrect email or password.'], 401);
+    }
+    unset($_SESSION['login_failed_attempts'], $_SESSION['login_lockout_until']);
     $_SESSION['user'] = ['id' => (int) $record['id'], 'name' => $record['name'], 'email' => $record['email'], 'role' => $record['role'], 'profileImage' => $record['profile_image']];
     reply(['user' => user()]);
 }
@@ -56,6 +129,45 @@ if ($action === 'me') {
     }
     reply(['user' => user()]);
 }
+
+if ($method === 'POST' && $action === 'request-password-reset') {
+    $email = strtolower(trim((string) ($payload['email'] ?? '')));
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) reply(['message' => 'Enter a valid email address.'], 400);
+
+    $statement = $db->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
+    $statement->execute([$email]);
+    $record = $statement->fetch();
+    if (!$record) reply(['message' => 'If an account exists for that email, a verification code has been sent.']);
+
+    $code = (string) random_int(100000, 999999);
+    $tokenHash = hash('sha256', $code);
+    $expiresAt = time() + 900;
+    $db->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?')->execute([(int) $record['id']]);
+    $db->prepare('INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at) VALUES (?, ?, ?, ?)')->execute([(int) $record['id'], $email, $tokenHash, $expiresAt]);
+
+    if (!sendVerificationEmail($email, $code)) {
+        $db->prepare('DELETE FROM password_reset_tokens WHERE token_hash = ?')->execute([$tokenHash]);
+        reply(['message' => 'The verification email could not be sent. Add your SMTP details to mail-config.php and try again.'], 500);
+    }
+    reply(['message' => 'If an account exists for that email, a verification code has been sent.']);
+}
+
+if ($method === 'POST' && $action === 'reset-password') {
+    $email = strtolower(trim((string) ($payload['email'] ?? '')));
+    $code = trim((string) ($payload['code'] ?? ''));
+    $newPassword = (string) ($payload['newPassword'] ?? '');
+    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/^\d{6}$/', $code)) reply(['message' => 'Enter the 6-digit verification code from your email.'], 400);
+    if (strlen($newPassword) < 6) reply(['message' => 'The new password must be at least 6 characters.'], 400);
+
+    $statement = $db->prepare('SELECT id, user_id FROM password_reset_tokens WHERE email = ? AND token_hash = ? AND expires_at >= ? LIMIT 1');
+    $statement->execute([$email, hash('sha256', $code), time()]);
+    $token = $statement->fetch();
+    if (!$token) reply(['message' => 'That verification code is invalid or expired.'], 400);
+    $db->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($newPassword, PASSWORD_DEFAULT), (int) $token['user_id']]);
+    $db->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?')->execute([(int) $token['user_id']]);
+    reply(['message' => 'Password changed successfully. You can now log in.']);
+}
+
 if ($method === 'POST' && $action === 'logout') { $_SESSION = []; session_destroy(); reply(['message' => 'Logged out.']); }
 
 requireLogin();

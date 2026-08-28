@@ -6,6 +6,7 @@ let archivedCategory = 'students';
 let editingRow = null;
 let currentUser = null;
 let sessionTimer = null;
+let loginLockoutTimer = null;
 
 function getSurname(name) {
     const parts = String(name).trim().split(/\s+/);
@@ -18,6 +19,34 @@ function setAuthMessage(message, type) {
         messageElement.textContent = message;
         messageElement.className = `auth-message ${type || ''}`;
     }
+}
+
+function startLoginLockout(seconds) {
+    const loginForm = document.getElementById('loginForm');
+    const loginSubmit = loginForm.querySelector('.auth-submit');
+    const loginInputs = loginForm.querySelectorAll('input');
+    const messageElement = document.getElementById('authMessage');
+    let remaining = Math.max(1, Number(seconds) || 60);
+    if (loginLockoutTimer) clearInterval(loginLockoutTimer);
+    loginSubmit.disabled = true;
+    loginInputs.forEach(function (input) { input.disabled = true; });
+    const updateLockout = function () {
+        if (remaining <= 0) {
+            clearInterval(loginLockoutTimer);
+            loginLockoutTimer = null;
+            loginSubmit.disabled = false;
+            loginSubmit.textContent = 'Log in';
+            loginInputs.forEach(function (input) { input.disabled = false; });
+            setAuthMessage('You can try logging in again.');
+            return;
+        }
+        loginSubmit.textContent = `Try again in ${remaining}s`;
+        messageElement.className = 'auth-message error';
+        messageElement.textContent = `Too many failed attempts. Try again in ${remaining} seconds.`;
+        remaining -= 1;
+    };
+    updateLockout();
+    loginLockoutTimer = setInterval(updateLockout, 1000);
 }
 
 async function showApp(user) {
@@ -122,6 +151,9 @@ function showAuth() {
 
 function switchAuthMode(mode) {
     const isLogin = mode === 'login';
+    document.getElementById('resetForm').hidden = true;
+    document.querySelector('.auth-tabs').hidden = false;
+    document.getElementById('forgotPasswordLink').hidden = false;
     document.getElementById('loginTab').classList.toggle('active', isLogin);
     document.getElementById('signupTab').classList.toggle('active', !isLogin);
     document.getElementById('loginTab').setAttribute('aria-selected', String(isLogin));
@@ -135,6 +167,24 @@ function switchAuthMode(mode) {
     setAuthMessage('');
 }
 
+function showResetForm() {
+    document.getElementById('loginForm').hidden = true;
+    document.getElementById('signupForm').hidden = true;
+    document.getElementById('resetForm').hidden = false;
+    document.querySelector('.auth-tabs').hidden = true;
+    document.getElementById('forgotPasswordLink').hidden = true;
+    document.getElementById('authTitle').textContent = 'Reset your password';
+    document.getElementById('authSubtitle').textContent = 'We will send a verification code to your email.';
+    document.getElementById('resetEmail').value = document.getElementById('loginEmail').value;
+    document.getElementById('resetVerificationFields').hidden = true;
+    document.getElementById('resetCode').required = false;
+    document.getElementById('resetNewPassword').required = false;
+    document.getElementById('resetConfirmPassword').required = false;
+    document.getElementById('resetSubmit').textContent = 'Send verification code';
+    document.getElementById('resetSubmit').disabled = false;
+    setAuthMessage('');
+}
+
 async function requestApi(action, options) {
     const response = await fetch(`api.php?action=${action}`, {
         credentials: 'same-origin',
@@ -142,7 +192,11 @@ async function requestApi(action, options) {
         ...options
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Request failed.');
+    if (!response.ok) {
+        const error = new Error(data.message || 'Request failed.');
+        error.retryAfter = data.retryAfter;
+        throw error;
+    }
     return data;
 }
 
@@ -165,6 +219,8 @@ async function initializeAuth() {
 
     document.getElementById('loginTab').addEventListener('click', function () { switchAuthMode('login'); });
     document.getElementById('signupTab').addEventListener('click', function () { switchAuthMode('signup'); });
+    document.getElementById('forgotPasswordLink').addEventListener('click', showResetForm);
+    document.getElementById('resetBack').addEventListener('click', function () { switchAuthMode('login'); });
 
     document.getElementById('loginForm').addEventListener('submit', async function (event) {
         event.preventDefault();
@@ -181,6 +237,7 @@ async function initializeAuth() {
             await showApp(data.user);
         } catch (error) {
             setAuthMessage(error.message, 'error');
+            if (error.retryAfter) startLoginLockout(error.retryAfter);
         }
     });
 
@@ -198,6 +255,40 @@ async function initializeAuth() {
         }
 
 
+    });
+
+    document.getElementById('resetForm').addEventListener('submit', async function (event) {
+        event.preventDefault();
+        const email = document.getElementById('resetEmail').value.trim().toLowerCase();
+        const verificationFields = document.getElementById('resetVerificationFields');
+        const submitButton = document.getElementById('resetSubmit');
+        const defaultSubmitLabel = verificationFields.hidden ? 'Send verification code' : 'Change password';
+        submitButton.disabled = true;
+        submitButton.textContent = verificationFields.hidden ? 'Sending...' : 'Updating...';
+        try {
+            if (verificationFields.hidden) {
+                await requestApi('request-password-reset', { method: 'POST', body: JSON.stringify({ email }) });
+                verificationFields.hidden = false;
+                document.getElementById('resetCode').required = true;
+                document.getElementById('resetNewPassword').required = true;
+                document.getElementById('resetConfirmPassword').required = true;
+                submitButton.textContent = 'Change password';
+                setAuthMessage('Check your email for the 6-digit verification code.');
+                return;
+            }
+            const newPassword = document.getElementById('resetNewPassword').value;
+            if (newPassword !== document.getElementById('resetConfirmPassword').value) throw new Error('The passwords do not match.');
+            const code = document.getElementById('resetCode').value.trim();
+            const data = await requestApi('reset-password', { method: 'POST', body: JSON.stringify({ email, code, newPassword }) });
+            document.getElementById('resetForm').reset();
+            switchAuthMode('login');
+            setAuthMessage(data.message);
+        } catch (error) {
+            setAuthMessage(error.message, 'error');
+        } finally {
+            submitButton.disabled = false;
+            if (!submitButton.textContent || submitButton.textContent.endsWith('...')) submitButton.textContent = defaultSubmitLabel;
+        }
     });
 
     document.getElementById('logoutLink').addEventListener('click', function (event) {

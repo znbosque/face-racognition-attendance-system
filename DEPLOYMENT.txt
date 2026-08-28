@@ -23,3 +23,12 @@ The database is `attendance.sqlite`. It is included in the folder and contains t
 The launcher uses PHP's built-in web server. No MySQL, XAMPP, command prompt, or terminal setup is required on the user's computer when the php folder is included.
 
 If port 8080 is already in use, close the other local app using that port before starting this one.
+
+Password reset email setup:
+
+1. Copy `mail-config.php.example` and rename the copy to `mail-config.php`.
+2. Open `mail-config.php` and enter the SMTP settings for the email account that will send verification codes.
+3. For Gmail, enable 2-Step Verification and create an App Password. Use that App Password in the `password` field; do not use your normal Gmail password.
+4. Restart the app with `Start Attendance.vbs` and test Forgot password.
+
+Keep `mail-config.php` private. It contains the email account credentials used to send verification codes.
