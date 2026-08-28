@@ -27,7 +27,7 @@ Err.Clear
 On Error GoTo 0
 
 If Not serverReady Then
-    command = """" & phpExe & """ -S 127.0.0.1:8080 -t """ & appDir & """"
+    command = """" & phpExe & """ -S 0.0.0.0:8080 -t """ & appDir & """"
     Set wmi = GetObject("winmgmts:\\.\root\cimv2")
     Set startup = wmi.Get("Win32_ProcessStartup").SpawnInstance_
     startup.ShowWindow = 0
