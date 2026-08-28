@@ -9,6 +9,65 @@ function data(): array { $value = json_decode(file_get_contents('php://input'), 
 function reply(array $value, int $status = 200): never { http_response_code($status); echo json_encode($value); exit; }
 function user(): array { return $_SESSION['user'] ?? []; }
 function requireLogin(): void { if (!user()) reply(['message' => 'Login required.'], 401); }
+function sendVerificationEmail(string $recipient, string $code): bool {
+    $configPath = __DIR__ . DIRECTORY_SEPARATOR . 'mail-config.php';
+    $config = is_file($configPath) ? require $configPath : [];
+    if (!is_array($config) || empty($config['host']) || empty($config['username']) || empty($config['password'])) {
+        return false;
+    }
+
+    $host = (string) $config['host'];
+    $port = (int) ($config['port'] ?? 587);
+    $encryption = strtolower((string) ($config['encryption'] ?? 'tls'));
+    $from = (string) ($config['from'] ?? $config['username']);
+    $fromName = (string) ($config['from_name'] ?? 'DRLCEFI Attendance');
+    $remote = ($encryption === 'ssl' ? 'ssl://' : '') . $host . ':' . $port;
+    $context = stream_context_create(['ssl' => ['verify_peer' => true, 'verify_peer_name' => true]]);
+    $socket = @stream_socket_client($remote, $errorNumber, $errorMessage, 15, STREAM_CLIENT_CONNECT, $context);
+    if (!$socket) return false;
+    stream_set_timeout($socket, 15);
+
+    $read = static function () use ($socket): string {
+        $response = '';
+        while (($line = fgets($socket, 515)) !== false) {
+            $response .= $line;
+            if (strlen($line) < 4 || $line[3] === ' ') break;
+        }
+        return $response;
+    };
+    $write = static function (string $command) use ($socket, $read): bool {
+        fwrite($socket, $command . "\r\n");
+        return (int) substr($read(), 0, 3) < 400;
+    };
+
+    $ready = (int) substr($read(), 0, 3) < 400;
+    $ready = $ready && $write('EHLO localhost');
+    if ($ready && $encryption === 'tls') {
+        $ready = $write('STARTTLS') && @stream_socket_enable_crypto($socket, true, STREAM_CRYPTO_METHOD_TLS_CLIENT);
+        $ready = $ready && $write('EHLO localhost');
+    }
+    $ready = $ready && $write('AUTH LOGIN');
+    $ready = $ready && $write(base64_encode((string) $config['username']));
+    $ready = $ready && $write(base64_encode((string) $config['password']));
+    $ready = $ready && $write('MAIL FROM:<' . $from . '>');
+    $ready = $ready && $write('RCPT TO:<' . $recipient . '>');
+    $ready = $ready && $write('DATA');
+    if ($ready) {
+        $subject = 'DRLCEFI password reset verification code';
+        $body = "Your DRLCEFI verification code is: {$code}\r\n\r\nThis code expires in 15 minutes. If you did not request a password reset, you can ignore this email.";
+        $message = 'From: ' . $fromName . ' <' . $from . ">\r\n"
+            . 'To: <' . $recipient . ">\r\n"
+            . 'Subject: ' . $subject . "\r\n"
+            . "MIME-Version: 1.0\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\n"
+            . $body;
+        $message = preg_replace('/^\./m', '..', $message) . "\r\n.";
+        fwrite($socket, $message . "\r\n");
+        $ready = (int) substr($read(), 0, 3) < 400;
+    }
+    $write('QUIT');
+    fclose($socket);
+    return $ready;
+}
 function deviceToken(): string {
     $configuredToken = getenv('ATTENDANCE_DEVICE_TOKEN');
     if ($configuredToken !== false && trim($configuredToken) !== '') return trim($configuredToken);
@@ -23,6 +82,36 @@ function audit(PDO $db, string $action): void {
     $actor = user()['name'] ?? 'System';
     $statement = $db->prepare('INSERT INTO audit_logs (action, actor) VALUES (?, ?)');
     $statement->execute([$action, $actor]);
+}
+function scheduleTime(string $time): ?DateTime {
+    $date = DateTime::createFromFormat('Y-m-d g:i A', date('Y-m-d') . ' ' . trim($time));
+    return $date ?: null;
+}
+function markCompletedSchedulesAbsent(PDO $db): void {
+    $today = date('F j, Y');
+    $day = date('l');
+    $schedules = $db->prepare('SELECT subject, start_time, end_time, school_year FROM schedules WHERE day = ? AND is_archived = 0');
+    $schedules->execute([$day]);
+    $insert = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    foreach ($schedules->fetchAll() as $schedule) {
+        $end = scheduleTime((string) $schedule['end_time']);
+        if (!$end || new DateTime() <= $end) continue;
+        $students = $db->prepare('SELECT student_id, full_name, course, school_year FROM students WHERE is_archived = 0 AND school_year = ?');
+        $students->execute([$schedule['school_year']]);
+        foreach ($students->fetchAll() as $student) {
+            $existing = $db->prepare('SELECT id FROM attendance WHERE student_id = ? AND attendance_date = ? AND subject = ? LIMIT 1');
+            $existing->execute([$student['student_id'], $today, $schedule['subject']]);
+            if (!$existing->fetch()) $insert->execute([$student['student_id'], $student['full_name'], $student['course'], $today, $schedule['subject'], '--', '--', 'Absent', $student['school_year']]);
+        }
+    }
+}
+function statusForScan(PDO $db, string $subject): string {
+    $schedule = $db->prepare('SELECT start_time FROM schedules WHERE subject = ? AND day = ? AND is_archived = 0 ORDER BY start_time LIMIT 1');
+    $schedule->execute([$subject, date('l')]);
+    $record = $schedule->fetch();
+    if (!$record) return 'Present';
+    $start = scheduleTime((string) $record['start_time']);
+    return $start && new DateTime() > $start ? 'Late' : 'Present';
 }
 
 $action = $_GET['action'] ?? '';
@@ -74,8 +163,9 @@ if ($method === 'POST' && $action === 'device-attendance') {
 
     $studentId = trim((string) ($payload['studentId'] ?? ''));
     $subject = trim((string) ($payload['subject'] ?? ''));
-    $status = trim((string) ($payload['status'] ?? 'Present'));
-    $timeIn = trim((string) ($payload['timeIn'] ?? date('g:i A')));
+    markCompletedSchedulesAbsent($db);
+    $status = statusForScan($db, $subject);
+    $timeIn = date('g:i A');
     $timeOut = trim((string) ($payload['timeOut'] ?? '--'));
     if ($studentId === '' || $subject === '' || !in_array($status, ['Present', 'Late'], true)) reply(['message' => 'studentId, subject, and a valid status are required.'], 400);
 
@@ -128,6 +218,7 @@ if ($method === 'POST' && $action === 'password') {
 }
 
 if ($method === 'GET' && $action === 'dashboard') {
+    markCompletedSchedulesAbsent($db);
     $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
     $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time, school_year, is_archived, archived_school_year FROM schedules ORDER BY day, start_time')->fetchAll();
     $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year, is_archived, archived_school_year FROM attendance ORDER BY id')->fetchAll();
@@ -188,15 +279,30 @@ if ($method === 'POST' && $action === 'archive-student') {
 if ($method === 'POST' && $action === 'archive-year') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
     $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
+    $course = trim((string) ($payload['course'] ?? ''));
     if ($schoolYear === '') reply(['message' => 'A school year is required.'], 400);
-    $statement = $db->prepare('UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
-    $statement->execute([$schoolYear, $schoolYear]);
-    $attendanceStatement = $db->prepare('UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE is_archived = 0 AND student_id IN (SELECT student_id FROM students WHERE archived_school_year = ?)');
-    $attendanceStatement->execute([$schoolYear, $schoolYear, $schoolYear]);
-    $scheduleStatement = $db->prepare('UPDATE schedules SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
-    $scheduleStatement->execute([$schoolYear, $schoolYear]);
-    audit($db, 'Archived students for school year ' . $schoolYear);
-    reply(['message' => 'Students archived for ' . $schoolYear . '.']);
+    $studentQuery = 'UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?';
+    $studentParameters = [$schoolYear, $schoolYear];
+    if ($course !== '') {
+        $studentQuery .= ' AND course = ?';
+        $studentParameters[] = $course;
+    }
+    $db->prepare($studentQuery)->execute($studentParameters);
+
+    $attendanceQuery = 'UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE is_archived = 0 AND student_id IN (SELECT student_id FROM students WHERE school_year = ?';
+    $attendanceParameters = [$schoolYear, $schoolYear, $schoolYear];
+    if ($course !== '') {
+        $attendanceQuery .= ' AND course = ?';
+        $attendanceParameters[] = $course;
+    }
+    $attendanceQuery .= ')';
+    $db->prepare($attendanceQuery)->execute($attendanceParameters);
+
+    if ($course === '') {
+        $db->prepare('UPDATE schedules SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?')->execute([$schoolYear, $schoolYear]);
+    }
+    audit($db, 'Archived ' . ($course !== '' ? $course . ' students for ' : 'students for ') . $schoolYear);
+    reply(['message' => 'Selected records archived for ' . $schoolYear . ($course !== '' ? ' (' . $course . ')' : '') . '.']);
 }
 
 if ($method === 'POST' && $action === 'archive-attendance-date') {

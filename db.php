@@ -128,6 +128,15 @@ try {
         setting_key TEXT PRIMARY KEY,
         setting_value TEXT NOT NULL
     )');
+    $db->exec('CREATE TABLE IF NOT EXISTS password_reset_tokens (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        email TEXT NOT NULL,
+        token_hash TEXT NOT NULL,
+        expires_at INTEGER NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    )');
 
     $studentCount = (int) $db->query('SELECT COUNT(*) FROM students')->fetchColumn();
     if ($studentCount === 0) {

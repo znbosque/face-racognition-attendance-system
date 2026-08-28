@@ -6,6 +6,7 @@ let archivedCategory = 'students';
 let editingRow = null;
 let currentUser = null;
 let sessionTimer = null;
+let loginLockoutTimer = null;
 
 function getSurname(name) {
     const parts = String(name).trim().split(/\s+/);
@@ -18,6 +19,34 @@ function setAuthMessage(message, type) {
         messageElement.textContent = message;
         messageElement.className = `auth-message ${type || ''}`;
     }
+}
+
+function startLoginLockout(seconds) {
+    const loginForm = document.getElementById('loginForm');
+    const loginSubmit = loginForm.querySelector('.auth-submit');
+    const loginInputs = loginForm.querySelectorAll('input');
+    const messageElement = document.getElementById('authMessage');
+    let remaining = Math.max(1, Number(seconds) || 60);
+    if (loginLockoutTimer) clearInterval(loginLockoutTimer);
+    loginSubmit.disabled = true;
+    loginInputs.forEach(function (input) { input.disabled = true; });
+    const updateLockout = function () {
+        if (remaining <= 0) {
+            clearInterval(loginLockoutTimer);
+            loginLockoutTimer = null;
+            loginSubmit.disabled = false;
+            loginSubmit.textContent = 'Log in';
+            loginInputs.forEach(function (input) { input.disabled = false; });
+            setAuthMessage('You can try logging in again.');
+            return;
+        }
+        loginSubmit.textContent = `Try again in ${remaining}s`;
+        messageElement.className = 'auth-message error';
+        messageElement.textContent = `Too many failed attempts. Try again in ${remaining} seconds.`;
+        remaining -= 1;
+    };
+    updateLockout();
+    loginLockoutTimer = setInterval(updateLockout, 1000);
 }
 
 async function showApp(user) {
@@ -85,7 +114,7 @@ async function loadDashboardData() {
             return `<tr data-student-status="${archived ? 'archived' : 'active'}">
                 <td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td>
                 <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${escapeHtml(student.school_year || 'Unassigned')}</td>
-                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button></div></details></td></tr>`;
+                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button><button class="menu-item edit-btn" type="button">Edit</button><button class="menu-item delete-btn" type="button">Delete</button></div></details></td></tr>`;
         }).join('');
         filterStudents();
         renderArchivedStudents();
@@ -122,6 +151,9 @@ function showAuth() {
 
 function switchAuthMode(mode) {
     const isLogin = mode === 'login';
+    document.getElementById('resetForm').hidden = true;
+    document.querySelector('.auth-tabs').hidden = false;
+    document.getElementById('forgotPasswordLink').hidden = false;
     document.getElementById('loginTab').classList.toggle('active', isLogin);
     document.getElementById('signupTab').classList.toggle('active', !isLogin);
     document.getElementById('loginTab').setAttribute('aria-selected', String(isLogin));
@@ -135,6 +167,24 @@ function switchAuthMode(mode) {
     setAuthMessage('');
 }
 
+function showResetForm() {
+    document.getElementById('loginForm').hidden = true;
+    document.getElementById('signupForm').hidden = true;
+    document.getElementById('resetForm').hidden = false;
+    document.querySelector('.auth-tabs').hidden = true;
+    document.getElementById('forgotPasswordLink').hidden = true;
+    document.getElementById('authTitle').textContent = 'Reset your password';
+    document.getElementById('authSubtitle').textContent = 'We will send a verification code to your email.';
+    document.getElementById('resetEmail').value = document.getElementById('loginEmail').value;
+    document.getElementById('resetVerificationFields').hidden = true;
+    document.getElementById('resetCode').required = false;
+    document.getElementById('resetNewPassword').required = false;
+    document.getElementById('resetConfirmPassword').required = false;
+    document.getElementById('resetSubmit').textContent = 'Send verification code';
+    document.getElementById('resetSubmit').disabled = false;
+    setAuthMessage('');
+}
+
 async function requestApi(action, options) {
     const response = await fetch(`api.php?action=${action}`, {
         credentials: 'same-origin',
@@ -142,7 +192,11 @@ async function requestApi(action, options) {
         ...options
     });
     const data = await response.json();
-    if (!response.ok) throw new Error(data.message || 'Request failed.');
+    if (!response.ok) {
+        const error = new Error(data.message || 'Request failed.');
+        error.retryAfter = data.retryAfter;
+        throw error;
+    }
     return data;
 }
 
@@ -165,6 +219,8 @@ async function initializeAuth() {
 
     document.getElementById('loginTab').addEventListener('click', function () { switchAuthMode('login'); });
     document.getElementById('signupTab').addEventListener('click', function () { switchAuthMode('signup'); });
+    document.getElementById('forgotPasswordLink').addEventListener('click', showResetForm);
+    document.getElementById('resetBack').addEventListener('click', function () { switchAuthMode('login'); });
 
     document.getElementById('loginForm').addEventListener('submit', async function (event) {
         event.preventDefault();
@@ -181,6 +237,7 @@ async function initializeAuth() {
             await showApp(data.user);
         } catch (error) {
             setAuthMessage(error.message, 'error');
+            if (error.retryAfter) startLoginLockout(error.retryAfter);
         }
     });
 
@@ -198,6 +255,40 @@ async function initializeAuth() {
         }
 
 
+    });
+
+    document.getElementById('resetForm').addEventListener('submit', async function (event) {
+        event.preventDefault();
+        const email = document.getElementById('resetEmail').value.trim().toLowerCase();
+        const verificationFields = document.getElementById('resetVerificationFields');
+        const submitButton = document.getElementById('resetSubmit');
+        const defaultSubmitLabel = verificationFields.hidden ? 'Send verification code' : 'Change password';
+        submitButton.disabled = true;
+        submitButton.textContent = verificationFields.hidden ? 'Sending...' : 'Updating...';
+        try {
+            if (verificationFields.hidden) {
+                await requestApi('request-password-reset', { method: 'POST', body: JSON.stringify({ email }) });
+                verificationFields.hidden = false;
+                document.getElementById('resetCode').required = true;
+                document.getElementById('resetNewPassword').required = true;
+                document.getElementById('resetConfirmPassword').required = true;
+                submitButton.textContent = 'Change password';
+                setAuthMessage('Check your email for the 6-digit verification code.');
+                return;
+            }
+            const newPassword = document.getElementById('resetNewPassword').value;
+            if (newPassword !== document.getElementById('resetConfirmPassword').value) throw new Error('The passwords do not match.');
+            const code = document.getElementById('resetCode').value.trim();
+            const data = await requestApi('reset-password', { method: 'POST', body: JSON.stringify({ email, code, newPassword }) });
+            document.getElementById('resetForm').reset();
+            switchAuthMode('login');
+            setAuthMessage(data.message);
+        } catch (error) {
+            setAuthMessage(error.message, 'error');
+        } finally {
+            submitButton.disabled = false;
+            if (!submitButton.textContent || submitButton.textContent.endsWith('...')) submitButton.textContent = defaultSubmitLabel;
+        }
     });
 
     document.getElementById('logoutLink').addEventListener('click', function (event) {
@@ -722,9 +813,10 @@ async function confirmArchiveSchoolYear() {
         return;
     }
     const schoolYear = `${startYear}-${endYear}`;
+    const course = document.getElementById('archiveCourse').value;
     if (!shouldConfirmArchive()) return;
     try {
-        await requestApi('archive-year', { method: 'POST', body: JSON.stringify({ schoolYear: schoolYear }) });
+        await requestApi('archive-year', { method: 'POST', body: JSON.stringify({ schoolYear: schoolYear, course: course }) });
         closeArchiveSchoolYearModal();
         await loadDashboardData();
     } catch (error) {
@@ -1236,22 +1328,111 @@ function hasScheduleConflict(day, room, startTime, endTime, ignoredRow) {
 function generateReport() {
     const from = document.getElementById('reportFromDate').value;
     const to = document.getElementById('reportToDate').value;
+    const day = document.getElementById('reportDayFilter').value;
     const course = document.getElementById('reportCourseFilter').value;
+    const records = dashboardData.attendance.filter(function (record) {
+        const date = new Date(record.attendance_date);
+        const dateKey = attendanceDateKey(date);
+        return (!from || dateKey >= from) && (!to || dateKey <= to) && (day === '' || String(date.getDay()) === day) && (!course || record.course === course);
+    });
+    const students = dashboardData.students.filter(function (student) { return !course || student.course === course; });
+    const reportBody = document.querySelector('#reportTable tbody');
+    if (reportBody) {
+        reportBody.innerHTML = students.map(function (student) {
+            const studentRecords = records.filter(function (record) { return record.student_id === student.student_id; });
+            const present = studentRecords.filter(function (record) { return record.status === 'Present'; }).length;
+            const late = studentRecords.filter(function (record) { return record.status === 'Late'; }).length;
+            const absent = studentRecords.filter(function (record) { return record.status === 'Absent'; }).length;
+            const total = present + late + absent;
+            const rate = total ? Math.round(((present + late) / total) * 100) : 0;
+            const status = absent > present + late ? 'At Risk' : late > present ? 'Warning' : 'Good Standing';
+            return `<tr><td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td><td>${present}</td><td>${late}</td><td>${absent}</td><td>${rate}%</td><td class="${statusClass(status)}">${status}</td></tr>`;
+        }).join('');
+    }
     const message = document.getElementById('reportRangeMessage');
     if (message) {
-        message.textContent = `Report generated${from ? ` from ${from}` : ''}${to ? ` to ${to}` : ''}${course ? ` for ${course}` : ''}.`;
+        const dayLabel = day === '' ? '' : ` on ${document.getElementById('reportDayFilter').selectedOptions[0].textContent}`;
+        message.textContent = `Report generated${from ? ` from ${from}` : ''}${to ? ` to ${to}` : ''}${dayLabel}${course ? ` for ${course}` : ''}.`;
     }
 }
 
-function exportReport() {
-    const rows = Array.from(document.querySelectorAll('#reportTable tr')).map(function (row) {
-        return Array.from(row.cells).map(function (cell) { return `"${cell.textContent.replace(/"/g, '""')}"`; }).join(',');
+function setReportToday() {
+    const today = attendanceDateKey(new Date());
+    document.getElementById('reportFromDate').value = today;
+    document.getElementById('reportToDate').value = today;
+    document.getElementById('reportDayFilter').value = String(new Date().getDay());
+    generateReport();
+}
+
+function downloadReportFile() {
+    const pdfLibrary = window.jspdf;
+    const table = document.getElementById('reportTable');
+    if (!pdfLibrary || !table) {
+        alert('The PDF download library is not available. Check your internet connection and try again.');
+        return;
+    }
+    const pdf = new pdfLibrary.jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    const pageWidth = pdf.internal.pageSize.getWidth();
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 14;
+    const columns = Array.from(table.querySelectorAll('thead th')).map(function (cell) { return cell.textContent.trim(); });
+    const rows = Array.from(table.querySelectorAll('tbody tr')).map(function (row) {
+        return Array.from(row.cells).map(function (cell) { return cell.textContent.trim(); });
     });
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(new Blob([rows.join('\n')], { type: 'text/csv' }));
-    link.download = 'attendance-report.csv';
-    link.click();
-    URL.revokeObjectURL(link.href);
+    const columnWidths = [30, 64, 25, 25, 25, 31, 56];
+    const rowHeight = 9;
+    const drawHeader = function () {
+        pdf.setFillColor(128, 0, 0);
+        pdf.rect(0, 0, pageWidth, 7, 'F');
+        pdf.setTextColor(128, 0, 0);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(11);
+        pdf.text('DRLCEFI', pageWidth / 2, 18, { align: 'center' });
+        pdf.setFontSize(21);
+        pdf.text('Attendance Report', pageWidth / 2, 29, { align: 'center' });
+        pdf.setTextColor(102, 89, 84);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(9);
+        pdf.text(`Generated ${new Date().toLocaleString()}`, pageWidth / 2, 36, { align: 'center' });
+        const message = document.getElementById('reportRangeMessage')?.textContent || '';
+        pdf.text(message, pageWidth / 2, 42, { align: 'center' });
+    };
+    const drawTableHeader = function (y) {
+        pdf.setFillColor(128, 0, 0);
+        pdf.rect(margin, y, pageWidth - margin * 2, rowHeight, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(8);
+        let x = margin;
+        columns.forEach(function (column, index) { pdf.text(column, x + 2, y + 6); x += columnWidths[index]; });
+        return y + rowHeight;
+    };
+    drawHeader();
+    let y = drawTableHeader(50);
+    rows.forEach(function (row, rowIndex) {
+        if (y + rowHeight > pageHeight - 12) {
+            pdf.addPage();
+            drawHeader();
+            y = drawTableHeader(50);
+        }
+        pdf.setFillColor(rowIndex % 2 ? 251 : 255, rowIndex % 2 ? 248 : 255, rowIndex % 2 ? 246 : 255);
+        pdf.rect(margin, y, pageWidth - margin * 2, rowHeight, 'F');
+        pdf.setDrawColor(228, 216, 210);
+        pdf.rect(margin, y, pageWidth - margin * 2, rowHeight);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8);
+        let x = margin;
+        row.forEach(function (value, index) {
+            if (index === row.length - 1) {
+                const color = value === 'Good Standing' ? [33, 107, 44] : value === 'Warning' ? [138, 87, 0] : [128, 0, 0];
+                pdf.setTextColor(color[0], color[1], color[2]);
+            } else pdf.setTextColor(47, 34, 34);
+            pdf.text(pdf.splitTextToSize(value, columnWidths[index] - 4)[0], x + 2, y + 6);
+            x += columnWidths[index];
+        });
+        y += rowHeight;
+    });
+    pdf.save(`attendance-report-${attendanceDateKey(new Date())}.pdf`);
 }
 
 function closeModal() {
@@ -1352,11 +1533,12 @@ async function addStudent() {
     const schoolYearStart = document.getElementById('studentSchoolYearStart').value.trim();
     const schoolYearEnd = document.getElementById('studentSchoolYearEnd').value.trim();
     const schoolYear = `${schoolYearStart}-${schoolYearEnd}`;
+    const parentPhone = document.getElementById('parentPhone').value.trim();
     const year = document.getElementById('year').value.trim();
     const status = document.getElementById('status').value.trim();
     const facePhoto = document.getElementById('facePhoto').files[0];
 
-    if (!studentId || !firstName || !lastName || !course || !schoolYearStart || !schoolYearEnd || !year || !status || !facePhoto) {
+    if (!studentId || !firstName || !lastName || !course || !schoolYearStart || !schoolYearEnd || !parentPhone || !year || !status || !facePhoto) {
         alert('Please complete all required fields.');
         return;
     }
@@ -1371,7 +1553,7 @@ async function addStudent() {
 
     try {
         const facePhotoData = await readFacePhoto(facePhoto);
-        await requestApi('student', { method: 'POST', body: JSON.stringify({ studentId, fullName, course, schoolYear, year, status, facePhoto: facePhotoData }) });
+        await requestApi('student', { method: 'POST', body: JSON.stringify({ studentId, fullName, course, schoolYear, parentPhone, year, status, facePhoto: facePhotoData }) });
         closeStudentModal();
         clearStudentForm();
         await loadDashboardData();
