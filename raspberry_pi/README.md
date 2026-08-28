@@ -58,4 +58,4 @@ Look for `Recorded ...` in the terminal, then refresh the dashboard Attendance v
 
 Connect the modem by USB, insert a SIM, and find its serial device with `ls /dev/ttyUSB*`. Set `sms_enabled` and `sms_port` in `config.json`. The client sends to the `parent_phone` stored for the recognized student. The modem requires its own stable power supply; do not power it from a GPIO pin.
 
-The current client sends SMS to one configured recipient. For parent-specific SMS, add a protected API response containing the student's `parent_phone` or implement SMS sending on the PHP server.
+The client sends SMS to the `parent_phone` returned by the protected API for the recognized student.
