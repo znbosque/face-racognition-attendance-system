@@ -1,0 +1,4 @@
+device_config.php
+*.pyc
+__pycache__/
+.env

@@ -1184,18 +1184,24 @@ tr:hover {
     border-radius: 0.35rem;
     color: #334155;
     cursor: pointer;
+    flex: 1 1 150px;
     padding: 0.65rem 1rem;
+    text-align: center;
 }
 
 .archive-category-tab.active,
 .archive-category-tab:hover {
-    background: #2457a6;
-    border-color: #2457a6;
+    background: #800000;
+    border-color: #800000;
     color: #fff;
 }
 
 .archive-detail-panel h2 {
     margin-top: 0;
+}
+
+.archive-detail-panel th {
+    text-align: center;
 }
 
 .archive-overview-summary {
