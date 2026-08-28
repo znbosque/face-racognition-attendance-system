@@ -9,6 +9,16 @@ function data(): array { $value = json_decode(file_get_contents('php://input'), 
 function reply(array $value, int $status = 200): never { http_response_code($status); echo json_encode($value); exit; }
 function user(): array { return $_SESSION['user'] ?? []; }
 function requireLogin(): void { if (!user()) reply(['message' => 'Login required.'], 401); }
+function deviceToken(): string {
+    $configuredToken = getenv('ATTENDANCE_DEVICE_TOKEN');
+    if ($configuredToken !== false && trim($configuredToken) !== '') return trim($configuredToken);
+    $configPath = __DIR__ . DIRECTORY_SEPARATOR . 'device_config.php';
+    if (is_file($configPath)) {
+        $config = require $configPath;
+        if (is_array($config) && !empty($config['token'])) return (string) $config['token'];
+    }
+    return '';
+}
 function audit(PDO $db, string $action): void {
     $actor = user()['name'] ?? 'System';
     $statement = $db->prepare('INSERT INTO audit_logs (action, actor) VALUES (?, ?)');
@@ -56,6 +66,35 @@ if ($action === 'me') {
     }
     reply(['user' => user()]);
 }
+
+if ($method === 'POST' && $action === 'device-attendance') {
+    $configuredToken = deviceToken();
+    $requestToken = $_SERVER['HTTP_X_DEVICE_TOKEN'] ?? ($payload['deviceToken'] ?? '');
+    if ($configuredToken === '' || !is_string($requestToken) || !hash_equals($configuredToken, $requestToken)) reply(['message' => 'Invalid device token.'], 401);
+
+    $studentId = trim((string) ($payload['studentId'] ?? ''));
+    $subject = trim((string) ($payload['subject'] ?? ''));
+    $status = trim((string) ($payload['status'] ?? 'Present'));
+    $timeIn = trim((string) ($payload['timeIn'] ?? date('g:i A')));
+    $timeOut = trim((string) ($payload['timeOut'] ?? '--'));
+    if ($studentId === '' || $subject === '' || !in_array($status, ['Present', 'Late'], true)) reply(['message' => 'studentId, subject, and a valid status are required.'], 400);
+
+    $studentStatement = $db->prepare('SELECT student_id, full_name, course, school_year, parent_phone FROM students WHERE student_id = ? AND is_archived = 0 LIMIT 1');
+    $studentStatement->execute([$studentId]);
+    $student = $studentStatement->fetch();
+    if (!$student) reply(['message' => 'Student was not found or is archived.'], 404);
+
+    $attendanceDate = date('F j, Y');
+    $duplicateStatement = $db->prepare('SELECT id FROM attendance WHERE student_id = ? AND attendance_date = ? AND subject = ? LIMIT 1');
+    $duplicateStatement->execute([$studentId, $attendanceDate, $subject]);
+    if ($duplicateStatement->fetch()) reply(['message' => 'Attendance already recorded for this student and subject today.'], 409);
+
+    $statement = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $statement->execute([$student['student_id'], $student['full_name'], $student['course'], $attendanceDate, $subject, $timeIn, $timeOut, $status, $student['school_year']]);
+    audit($db, 'Device recorded ' . $status . ' attendance for ' . $studentId);
+    reply(['message' => 'Attendance recorded.', 'studentId' => $studentId, 'studentName' => $student['full_name'], 'parentPhone' => $student['parent_phone'], 'date' => $attendanceDate]);
+}
+
 if ($method === 'POST' && $action === 'logout') { $_SESSION = []; session_destroy(); reply(['message' => 'Logged out.']); }
 
 requireLogin();

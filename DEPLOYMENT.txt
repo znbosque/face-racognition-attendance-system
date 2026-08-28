@@ -22,4 +22,8 @@ The database is `attendance.sqlite`. It is included in the folder and contains t
 
 The launcher uses PHP's built-in web server. No MySQL, XAMPP, command prompt, or terminal setup is required on the user's computer when the php folder is included.
 
-If port 8080 is already in use, close the other local app using that port before starting this one.
+If port 8080 is already in use, close the other local app using that port before starting it.
+
+Raspberry Pi hardware setup
+
+The Raspberry Pi integration files are in the raspberry_pi folder. Read raspberry_pi\README.md for camera enrollment, LAN configuration, the protected device-attendance API, and optional SIM7600 SMS setup. Create device_config.php from device_config.example.php before connecting a Pi.
