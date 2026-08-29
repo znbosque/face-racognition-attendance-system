@@ -114,7 +114,7 @@ async function loadDashboardData() {
             return `<tr data-student-id="${escapeHtml(student.student_id)}" data-student-row-id="${escapeHtml(String(student.id))}" data-student-status="${archived ? 'archived' : 'active'}">
                 <td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td>
                 <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${escapeHtml(student.school_year || 'Unassigned')}</td>
-                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button><button class="menu-item edit-btn" type="button" onclick="openStudentModal(this.closest('tr'))">Edit</button><button class="menu-item delete-btn" type="button">Delete</button></div></details></td></tr>`;
+                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button><button class="menu-item edit-btn" type="button" onclick="openStudentModal(this.closest('tr'))">Edit</button><button class="menu-item delete-btn" type="button" onclick="deleteStudent(this.closest('tr'))">Delete</button></div></details></td></tr>`;
         }).join('');
         filterStudents();
         renderArchivedStudents();
@@ -1636,6 +1636,26 @@ async function addStudent() {
         await loadDashboardData();
     } catch (error) {
         alert(error.message);
+    }
+}
+
+async function deleteStudent(row) {
+    const studentId = row.dataset.studentId;
+    const studentName = row.cells[1]?.textContent.trim() || studentId;
+    
+    if (!confirm(`Are you sure you want to delete ${studentName}? This action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        await requestApi('delete-student', {
+            method: 'POST',
+            body: JSON.stringify({ studentId })
+        });
+        alert(`Student ${studentName} has been deleted successfully.`);
+        await loadDashboardData();
+    } catch (error) {
+        alert('Error deleting student: ' + error.message);
     }
 }
 
