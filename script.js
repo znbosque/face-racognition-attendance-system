@@ -111,10 +111,10 @@ async function loadDashboardData() {
         });
         studentsBody.innerHTML = sortedStudents.map(function (student) {
             const archived = Number(student.is_archived) === 1;
-            return `<tr data-student-status="${archived ? 'archived' : 'active'}">
+            return `<tr data-student-id="${escapeHtml(student.student_id)}" data-student-row-id="${escapeHtml(String(student.id))}" data-student-status="${archived ? 'archived' : 'active'}">
                 <td>${escapeHtml(student.student_id)}</td><td>${escapeHtml(student.full_name)}</td>
                 <td>${escapeHtml(student.course)}</td><td>${escapeHtml(student.year)}</td><td>${escapeHtml(student.school_year || 'Unassigned')}</td>
-                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button><button class="menu-item edit-btn" type="button">Edit</button><button class="menu-item delete-btn" type="button">Delete</button></div></details></td></tr>`;
+                <td>${statusBadge(student.status)}</td><td><details class="row-menu"><summary aria-label="Student actions">•••</summary><div class="row-menu__content"><button class="menu-item" type="button" onclick="openStudentProfile(this)">Profile</button><button class="menu-item edit-btn" type="button" onclick="openStudentModal(this.closest('tr'))">Edit</button><button class="menu-item delete-btn" type="button">Delete</button></div></details></td></tr>`;
         }).join('');
         filterStudents();
         renderArchivedStudents();
@@ -191,7 +191,21 @@ async function requestApi(action, options) {
         headers: { 'Content-Type': 'application/json' },
         ...options
     });
-    const data = await response.json();
+    const rawText = await response.text();
+    let data = {};
+    if (rawText) {
+        try {
+            data = JSON.parse(rawText);
+        } catch (error) {
+            const contentType = String(response.headers.get('content-type') || '');
+            const message = contentType.includes('text/html')
+                ? 'The server returned an HTML error page. Check the PHP logs and try again.'
+                : 'The server returned an invalid JSON response.';
+            const invalidResponse = new Error(message);
+            invalidResponse.rawText = rawText;
+            throw invalidResponse;
+        }
+    }
     if (!response.ok) {
         const error = new Error(data.message || 'Request failed.');
         error.retryAfter = data.retryAfter;
@@ -1447,15 +1461,9 @@ function closeStudentModal() {
     const modal = document.getElementById('studentModal');
     if (modal) {
         modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
     }
     clearStudentForm();
-}
-
-function openStudentModal() {
-    const modal = document.getElementById('studentModal');
-    if (modal) {
-        modal.style.display = 'flex';
-    }
 }
 
 function openModal() {
@@ -1477,17 +1485,25 @@ function clearForm() {
     document.getElementById('scheduleSchoolYear').value = '';
 }
 
+let editingStudentId = null;
+
 function clearStudentForm() {
+    editingStudentId = null;
+    const modalTitle = document.querySelector('#studentModal h2');
+    if (modalTitle) modalTitle.textContent = 'Add Student';
+    const saveButton = document.querySelector('#studentModal .save-btn');
+    if (saveButton) saveButton.textContent = 'Save Student';
     document.getElementById('studentId').value = '';
     document.getElementById('studentFirstName').value = '';
     document.getElementById('studentMiddleName').value = '';
     document.getElementById('studentLastName').value = '';
     document.getElementById('course').value = '';
-    document.getElementById('studentSchoolYearStart').value = '';
-    document.getElementById('studentSchoolYearEnd').value = '';
+    document.getElementById('studentSchoolYearStart').value = String(new Date().getFullYear());
+    document.getElementById('studentSchoolYearEnd').value = String(new Date().getFullYear() + 1);
     document.getElementById('year').value = '';
     document.getElementById('status').value = '';
     document.getElementById('facePhoto').value = '';
+    document.getElementById('parentPhone').value = '';
 }
 
 function readFacePhoto(file) {
@@ -1523,6 +1539,62 @@ function initializeParentPhoneFormatter() {
 
 initializeParentPhoneFormatter();
 
+function openStudentModal(row) {
+    const modal = document.getElementById('studentModal');
+    if (!modal) return;
+
+    const modalTitle = document.querySelector('#studentModal h2');
+    const saveButton = document.querySelector('#studentModal .save-btn');
+    const fields = {
+        studentId: document.getElementById('studentId'),
+        firstName: document.getElementById('studentFirstName'),
+        middleName: document.getElementById('studentMiddleName'),
+        lastName: document.getElementById('studentLastName'),
+        course: document.getElementById('course'),
+        schoolYearStart: document.getElementById('studentSchoolYearStart'),
+        schoolYearEnd: document.getElementById('studentSchoolYearEnd'),
+        year: document.getElementById('year'),
+        status: document.getElementById('status'),
+        parentPhone: document.getElementById('parentPhone'),
+        facePhoto: document.getElementById('facePhoto')
+    };
+
+    editingStudentId = null;
+    if (modalTitle) modalTitle.textContent = 'Add Student';
+    if (saveButton) saveButton.textContent = 'Save Student';
+    Object.values(fields).forEach(function (field) { if (field && field.tagName === 'INPUT' && field.type === 'file') field.value = ''; else if (field) field.value = ''; });
+    if (fields.schoolYearStart) fields.schoolYearStart.value = String(new Date().getFullYear());
+    if (fields.schoolYearEnd) fields.schoolYearEnd.value = String(new Date().getFullYear() + 1);
+
+    if (row) {
+        editingStudentId = row.dataset.studentRowId || row.dataset.studentId || row.cells[0].textContent.trim();
+        const parts = (row.cells[1]?.textContent || '').trim().split(/\s+/);
+        const firstName = parts[0] || '';
+        const lastName = parts.length > 1 ? parts[parts.length - 1] : '';
+        const middleName = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
+        const schoolYear = (row.cells[4]?.textContent || '').trim();
+        const statusValue = row.cells[5]?.textContent.trim();
+
+        if (modalTitle) modalTitle.textContent = 'Edit Student';
+        if (saveButton) saveButton.textContent = 'Update Student';
+        if (fields.studentId) fields.studentId.value = row.cells[0].textContent.trim();
+        if (fields.firstName) fields.firstName.value = firstName;
+        if (fields.middleName) fields.middleName.value = middleName;
+        if (fields.lastName) fields.lastName.value = lastName;
+        if (fields.course) fields.course.value = row.cells[2].textContent.trim();
+        if (fields.schoolYearStart && fields.schoolYearEnd && /^\d{4}-\d{4}$/.test(schoolYear)) {
+            const [startYear, endYear] = schoolYear.split('-');
+            fields.schoolYearStart.value = startYear;
+            fields.schoolYearEnd.value = endYear;
+        }
+        if (fields.year) fields.year.value = row.cells[3].textContent.trim();
+        if (fields.status) fields.status.value = statusValue === 'Irregular' ? 'Irregular' : 'Regular';
+    }
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
 async function addStudent() {
     const studentId = document.getElementById('studentId').value.trim();
     const firstName = document.getElementById('studentFirstName').value.trim();
@@ -1538,7 +1610,7 @@ async function addStudent() {
     const status = document.getElementById('status').value.trim();
     const facePhoto = document.getElementById('facePhoto').files[0];
 
-    if (!studentId || !firstName || !lastName || !course || !schoolYearStart || !schoolYearEnd || !parentPhone || !year || !status || !facePhoto) {
+    if (!studentId || !firstName || !lastName || !course || !schoolYearStart || !schoolYearEnd || !parentPhone || !year || !status || (!editingStudentId && !facePhoto)) {
         alert('Please complete all required fields.');
         return;
     }
@@ -1546,14 +1618,16 @@ async function addStudent() {
         alert('Enter consecutive school years, such as 2026 and 2027.');
         return;
     }
-    if (facePhoto.size > 5 * 1024 * 1024) {
+    if (facePhoto && facePhoto.size > 5 * 1024 * 1024) {
         alert('The face photo must be 5 MB or smaller.');
         return;
     }
 
     try {
-        const facePhotoData = await readFacePhoto(facePhoto);
-        await requestApi('student', { method: 'POST', body: JSON.stringify({ studentId, fullName, course, schoolYear, parentPhone, year, status, facePhoto: facePhotoData }) });
+        const payload = { studentId, fullName, course, schoolYear, parentPhone, year, status };
+        if (editingStudentId) payload.id = editingStudentId;
+        if (facePhoto) payload.facePhoto = await readFacePhoto(facePhoto);
+        await requestApi('student', { method: 'POST', body: JSON.stringify(payload) });
         closeStudentModal();
         clearStudentForm();
         await loadDashboardData();

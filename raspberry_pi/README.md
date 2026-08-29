@@ -32,6 +32,7 @@ nano config.json
 ```
 
 Set `api_url`, `device_token`, and `subject`. Keep `sms_enabled` false until attendance recording works.
+The setup also installs the `attendance-client` service. After adding face images, start it with `sudo systemctl start attendance-client`. It will start automatically after future reboots and power outages.
 
 ## 3. Enroll faces
 
@@ -53,6 +54,7 @@ Run:
 ```
 
 Look for `Recorded ...` in the terminal, then refresh the dashboard Attendance view. Press `q` to stop the camera client.
+For normal unattended operation, use `sudo systemctl start attendance-client` instead of running the Python command manually. Check it with `sudo systemctl status attendance-client` and view errors with `journalctl -u attendance-client -f`.
 
 ## 5. Enable SIM7600 SMS
 

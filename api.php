@@ -3,6 +3,32 @@ declare(strict_types=1);
 
 session_start();
 header('Content-Type: application/json');
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+set_exception_handler(static function (Throwable $error): never {
+    http_response_code(500);
+    echo json_encode([
+        'message' => 'The server encountered an error while processing your request.',
+        'details' => $error->getMessage(),
+        'file' => $error->getFile(),
+        'line' => $error->getLine(),
+    ], JSON_THROW_ON_ERROR);
+    exit;
+});
+register_shutdown_function(static function (): void {
+    $error = error_get_last();
+    if (!$error) return;
+    $fatalErrors = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+    if (!in_array($error['type'], $fatalErrors, true)) return;
+    http_response_code(500);
+    echo json_encode([
+        'message' => 'The server encountered a fatal error while processing your request.',
+        'details' => $error['message'],
+        'file' => $error['file'],
+        'line' => $error['line'],
+    ], JSON_THROW_ON_ERROR);
+});
 require __DIR__ . '/db.php';
 
 function data(): array { $value = json_decode(file_get_contents('php://input'), true); return is_array($value) ? $value : $_POST; }
@@ -177,7 +203,15 @@ if ($method === 'POST' && $action === 'device-attendance') {
     $attendanceDate = date('F j, Y');
     $duplicateStatement = $db->prepare('SELECT id FROM attendance WHERE student_id = ? AND attendance_date = ? AND subject = ? LIMIT 1');
     $duplicateStatement->execute([$studentId, $attendanceDate, $subject]);
-    if ($duplicateStatement->fetch()) reply(['message' => 'Attendance already recorded for this student and subject today.'], 409);
+    $existingAttendance = $duplicateStatement->fetch();
+    if ($existingAttendance) {
+        $timeOut = date('g:i A');
+        $update = $db->prepare("UPDATE attendance SET time_out = ? WHERE id = ? AND (time_out = '--' OR time_out = '')");
+        $update->execute([$timeOut, $existingAttendance['id']]);
+        if ($update->rowCount() === 0) reply(['message' => 'Time out already recorded for this student and subject today.'], 409);
+        audit($db, 'Device recorded time out for ' . $studentId);
+        reply(['message' => 'Time out recorded.', 'studentId' => $studentId, 'studentName' => $student['full_name'], 'parentPhone' => $student['parent_phone'], 'date' => $attendanceDate, 'timeOut' => $timeOut, 'action' => 'time_out']);
+    }
 
     $statement = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
     $statement->execute([$student['student_id'], $student['full_name'], $student['course'], $attendanceDate, $subject, $timeIn, $timeOut, $status, $student['school_year']]);
@@ -219,7 +253,7 @@ if ($method === 'POST' && $action === 'password') {
 
 if ($method === 'GET' && $action === 'dashboard') {
     markCompletedSchedulesAbsent($db);
-    $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
+    $students = $db->query('SELECT id, student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
     $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time, school_year, is_archived, archived_school_year FROM schedules ORDER BY day, start_time')->fetchAll();
     $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year, is_archived, archived_school_year FROM attendance ORDER BY id')->fetchAll();
     $audit = $db->query('SELECT action, actor, created_at FROM audit_logs ORDER BY id DESC LIMIT 20')->fetchAll();
@@ -231,6 +265,8 @@ if ($method === 'GET' && $action === 'dashboard') {
 
 if ($method === 'POST' && $action === 'student') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
+    $studentId = trim((string) ($payload['studentId'] ?? ''));
+    $existingId = trim((string) ($payload['id'] ?? ''));
     $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
     if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'Please provide a valid school year, such as 2026-2027.'], 400);
     $parentPhone = trim((string) ($payload['parentPhone'] ?? ''));
@@ -243,27 +279,53 @@ if ($method === 'POST' && $action === 'student') {
     } else {
         $parentPhone = '+' . $phoneDigits;
     }
-    $facePhoto = (string) ($payload['facePhoto'] ?? '');
-    if (!preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $facePhoto, $matches)) reply(['message' => 'Please provide a valid face photo.'], 400);
-    $imageData = base64_decode($matches[2], true);
-    if ($imageData === false || strlen($imageData) > 5 * 1024 * 1024) reply(['message' => 'The face photo must be 5 MB or smaller.'], 400);
-    $imageInfo = @getimagesizefromstring($imageData);
-    if (!$imageInfo || !in_array($imageInfo['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) reply(['message' => 'The face photo is not a supported image.'], 400);
     $imageDirectory = __DIR__ . DIRECTORY_SEPARATOR . 'face_images';
     if (!is_dir($imageDirectory) && !mkdir($imageDirectory, 0755, true)) reply(['message' => 'Unable to create the face photo folder.'], 500);
-    $extension = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
-    $imageName = hash('sha256', (string) ($payload['studentId'] ?? '')) . '.' . $extension;
-    $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . $imageName;
-    if (file_put_contents($imagePath, $imageData) === false) reply(['message' => 'Unable to save the face photo.'], 500);
-    $relativeImagePath = 'face_images/' . $imageName;
+    $relativeImagePath = null;
+    $facePhoto = (string) ($payload['facePhoto'] ?? '');
+    if ($facePhoto !== '') {
+        if (!preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $facePhoto, $matches)) reply(['message' => 'Please provide a valid face photo.'], 400);
+        $imageData = base64_decode($matches[2], true);
+        if ($imageData === false || strlen($imageData) > 5 * 1024 * 1024) reply(['message' => 'The face photo must be 5 MB or smaller.'], 400);
+        $imageInfo = @getimagesizefromstring($imageData);
+        if (!$imageInfo || !in_array($imageInfo['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) reply(['message' => 'The face photo is not a supported image.'], 400);
+        $extension = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
+        $imageName = hash('sha256', $studentId) . '.' . $extension;
+        $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . $imageName;
+        if (file_put_contents($imagePath, $imageData) === false) reply(['message' => 'Unable to save the face photo.'], 500);
+        $relativeImagePath = 'face_images/' . $imageName;
+    }
+
+    if ($existingId !== '') {
+        $existingStudent = $db->prepare('SELECT student_id, face_image_path FROM students WHERE id = ? LIMIT 1');
+        $existingStudent->execute([$existingId]);
+        $existingRecord = $existingStudent->fetch();
+        if (!$existingRecord) reply(['message' => 'Student not found.'], 404);
+        $newStudentId = $studentId !== '' ? $studentId : (string) $existingRecord['student_id'];
+        $fields = 'student_id = ?, full_name = ?, course = ?, year = ?, school_year = ?, status = ?, parent_phone = ?';
+        $parameters = [$newStudentId, $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone];
+        if ($relativeImagePath !== null) {
+            $fields .= ', face_image_path = ?';
+            $parameters[] = $relativeImagePath;
+        }
+        $parameters[] = $existingId;
+        $statement = $db->prepare('UPDATE students SET ' . $fields . ' WHERE id = ?');
+        $statement->execute($parameters);
+        audit($db, 'Updated student ' . $newStudentId);
+        reply(['message' => 'Student updated.']);
+    }
+
     $statement = $db->prepare('INSERT INTO students (student_id, full_name, course, year, school_year, status, parent_phone, face_image_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     try {
-        $statement->execute([$payload['studentId'], $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone, $relativeImagePath]);
+        $statement->execute([$studentId, $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone, $relativeImagePath ?? '']);
     } catch (PDOException $error) {
-        @unlink($imagePath);
+        if ($relativeImagePath !== null) {
+            $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . basename($relativeImagePath);
+            @unlink($imagePath);
+        }
         throw $error;
     }
-    audit($db, 'Added student ' . $payload['studentId']);
+    audit($db, 'Added student ' . $studentId);
     reply(['message' => 'Student added.']);
 }
 
