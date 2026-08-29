@@ -3,6 +3,32 @@ declare(strict_types=1);
 
 session_start();
 header('Content-Type: application/json');
+set_error_handler(static function (int $severity, string $message, string $file, int $line): bool {
+    throw new ErrorException($message, 0, $severity, $file, $line);
+});
+set_exception_handler(static function (Throwable $error): never {
+    http_response_code(500);
+    echo json_encode([
+        'message' => 'The server encountered an error while processing your request.',
+        'details' => $error->getMessage(),
+        'file' => $error->getFile(),
+        'line' => $error->getLine(),
+    ], JSON_THROW_ON_ERROR);
+    exit;
+});
+register_shutdown_function(static function (): void {
+    $error = error_get_last();
+    if (!$error) return;
+    $fatalErrors = [E_ERROR, E_PARSE, E_CORE_ERROR, E_COMPILE_ERROR, E_USER_ERROR];
+    if (!in_array($error['type'], $fatalErrors, true)) return;
+    http_response_code(500);
+    echo json_encode([
+        'message' => 'The server encountered a fatal error while processing your request.',
+        'details' => $error['message'],
+        'file' => $error['file'],
+        'line' => $error['line'],
+    ], JSON_THROW_ON_ERROR);
+});
 require __DIR__ . '/db.php';
 
 function data(): array { $value = json_decode(file_get_contents('php://input'), true); return is_array($value) ? $value : $_POST; }
@@ -78,10 +104,50 @@ function sendVerificationEmail(string $recipient, string $code): bool {
     fclose($socket);
     return $ready;
 }
+function deviceToken(): string {
+    $configuredToken = getenv('ATTENDANCE_DEVICE_TOKEN');
+    if ($configuredToken !== false && trim($configuredToken) !== '') return trim($configuredToken);
+    $configPath = __DIR__ . DIRECTORY_SEPARATOR . 'device_config.php';
+    if (is_file($configPath)) {
+        $config = require $configPath;
+        if (is_array($config) && !empty($config['token'])) return (string) $config['token'];
+    }
+    return '';
+}
 function audit(PDO $db, string $action): void {
     $actor = user()['name'] ?? 'System';
     $statement = $db->prepare('INSERT INTO audit_logs (action, actor) VALUES (?, ?)');
     $statement->execute([$action, $actor]);
+}
+function scheduleTime(string $time): ?DateTime {
+    $date = DateTime::createFromFormat('Y-m-d g:i A', date('Y-m-d') . ' ' . trim($time));
+    return $date ?: null;
+}
+function markCompletedSchedulesAbsent(PDO $db): void {
+    $today = date('F j, Y');
+    $day = date('l');
+    $schedules = $db->prepare('SELECT subject, start_time, end_time, school_year FROM schedules WHERE day = ? AND is_archived = 0');
+    $schedules->execute([$day]);
+    $insert = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    foreach ($schedules->fetchAll() as $schedule) {
+        $end = scheduleTime((string) $schedule['end_time']);
+        if (!$end || new DateTime() <= $end) continue;
+        $students = $db->prepare('SELECT student_id, full_name, course, school_year FROM students WHERE is_archived = 0 AND school_year = ?');
+        $students->execute([$schedule['school_year']]);
+        foreach ($students->fetchAll() as $student) {
+            $existing = $db->prepare('SELECT id FROM attendance WHERE student_id = ? AND attendance_date = ? AND subject = ? LIMIT 1');
+            $existing->execute([$student['student_id'], $today, $schedule['subject']]);
+            if (!$existing->fetch()) $insert->execute([$student['student_id'], $student['full_name'], $student['course'], $today, $schedule['subject'], '--', '--', 'Absent', $student['school_year']]);
+        }
+    }
+}
+function statusForScan(PDO $db, string $subject): string {
+    $schedule = $db->prepare('SELECT start_time FROM schedules WHERE subject = ? AND day = ? AND is_archived = 0 ORDER BY start_time LIMIT 1');
+    $schedule->execute([$subject, date('l')]);
+    $record = $schedule->fetch();
+    if (!$record) return 'Present';
+    $start = scheduleTime((string) $record['start_time']);
+    return $start && new DateTime() > $start ? 'Late' : 'Present';
 }
 
 $action = $_GET['action'] ?? '';
@@ -107,24 +173,10 @@ if ($method === 'POST' && $action === 'signup') {
 }
 
 if ($method === 'POST' && $action === 'login') {
-    $lockoutUntil = (int) ($_SESSION['login_lockout_until'] ?? 0);
-    if ($lockoutUntil > time()) reply(['message' => 'Too many failed attempts. Try again in 1 minute.', 'retryAfter' => $lockoutUntil - time()], 429);
-    if ($lockoutUntil > 0) unset($_SESSION['login_lockout_until'], $_SESSION['login_failed_attempts']);
-
     $statement = $db->prepare('SELECT id, name, email, role, password_hash, profile_image FROM users WHERE email = ? LIMIT 1');
     $statement->execute([strtolower(trim((string) ($payload['email'] ?? '')))]);
     $record = $statement->fetch();
-    if (!$record || !password_verify((string) ($payload['password'] ?? ''), $record['password_hash'])) {
-        $failedAttempts = (int) ($_SESSION['login_failed_attempts'] ?? 0) + 1;
-        if ($failedAttempts >= 3) {
-            $_SESSION['login_failed_attempts'] = 0;
-            $_SESSION['login_lockout_until'] = time() + 60;
-            reply(['message' => 'Too many failed attempts. Try again in 1 minute.', 'retryAfter' => 60], 429);
-        }
-        $_SESSION['login_failed_attempts'] = $failedAttempts;
-        reply(['message' => 'Incorrect email or password.'], 401);
-    }
-    unset($_SESSION['login_failed_attempts'], $_SESSION['login_lockout_until']);
+    if (!$record || !password_verify((string) ($payload['password'] ?? ''), $record['password_hash'])) reply(['message' => 'Incorrect email or password.'], 401);
     $_SESSION['user'] = ['id' => (int) $record['id'], 'name' => $record['name'], 'email' => $record['email'], 'role' => $record['role'], 'profileImage' => $record['profile_image']];
     reply(['user' => user()]);
 }
@@ -140,42 +192,41 @@ if ($action === 'me') {
     reply(['user' => user()]);
 }
 
-if ($method === 'POST' && $action === 'request-password-reset') {
-    $email = strtolower(trim((string) ($payload['email'] ?? '')));
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL)) reply(['message' => 'Enter a valid email address.'], 400);
+if ($method === 'POST' && $action === 'device-attendance') {
+    $configuredToken = deviceToken();
+    $requestToken = $_SERVER['HTTP_X_DEVICE_TOKEN'] ?? ($payload['deviceToken'] ?? '');
+    if ($configuredToken === '' || !is_string($requestToken) || !hash_equals($configuredToken, $requestToken)) reply(['message' => 'Invalid device token.'], 401);
 
-    $statement = $db->prepare('SELECT id FROM users WHERE email = ? LIMIT 1');
-    $statement->execute([$email]);
-    $record = $statement->fetch();
-    if (!$record) reply(['message' => 'If an account exists for that email, a verification code has been sent.']);
+    $studentId = trim((string) ($payload['studentId'] ?? ''));
+    $subject = trim((string) ($payload['subject'] ?? ''));
+    markCompletedSchedulesAbsent($db);
+    $status = statusForScan($db, $subject);
+    $timeIn = date('g:i A');
+    $timeOut = trim((string) ($payload['timeOut'] ?? '--'));
+    if ($studentId === '' || $subject === '' || !in_array($status, ['Present', 'Late'], true)) reply(['message' => 'studentId, subject, and a valid status are required.'], 400);
 
-    $code = (string) random_int(100000, 999999);
-    $tokenHash = hash('sha256', $code);
-    $expiresAt = time() + 900;
-    $db->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?')->execute([(int) $record['id']]);
-    $db->prepare('INSERT INTO password_reset_tokens (user_id, email, token_hash, expires_at) VALUES (?, ?, ?, ?)')->execute([(int) $record['id'], $email, $tokenHash, $expiresAt]);
+    $studentStatement = $db->prepare('SELECT student_id, full_name, course, school_year, parent_phone FROM students WHERE student_id = ? AND is_archived = 0 LIMIT 1');
+    $studentStatement->execute([$studentId]);
+    $student = $studentStatement->fetch();
+    if (!$student) reply(['message' => 'Student was not found or is archived.'], 404);
 
-    if (!sendVerificationEmail($email, $code)) {
-        $db->prepare('DELETE FROM password_reset_tokens WHERE token_hash = ?')->execute([$tokenHash]);
-        reply(['message' => 'The verification email could not be sent. Add your SMTP details to mail-config.php and try again.'], 500);
+    $attendanceDate = date('F j, Y');
+    $duplicateStatement = $db->prepare('SELECT id FROM attendance WHERE student_id = ? AND attendance_date = ? AND subject = ? LIMIT 1');
+    $duplicateStatement->execute([$studentId, $attendanceDate, $subject]);
+    $existingAttendance = $duplicateStatement->fetch();
+    if ($existingAttendance) {
+        $timeOut = date('g:i A');
+        $update = $db->prepare("UPDATE attendance SET time_out = ? WHERE id = ? AND (time_out = '--' OR time_out = '')");
+        $update->execute([$timeOut, $existingAttendance['id']]);
+        if ($update->rowCount() === 0) reply(['message' => 'Time out already recorded for this student and subject today.'], 409);
+        audit($db, 'Device recorded time out for ' . $studentId);
+        reply(['message' => 'Time out recorded.', 'studentId' => $studentId, 'studentName' => $student['full_name'], 'parentPhone' => $student['parent_phone'], 'date' => $attendanceDate, 'timeOut' => $timeOut, 'action' => 'time_out']);
     }
-    reply(['message' => 'If an account exists for that email, a verification code has been sent.']);
-}
 
-if ($method === 'POST' && $action === 'reset-password') {
-    $email = strtolower(trim((string) ($payload['email'] ?? '')));
-    $code = trim((string) ($payload['code'] ?? ''));
-    $newPassword = (string) ($payload['newPassword'] ?? '');
-    if (!filter_var($email, FILTER_VALIDATE_EMAIL) || !preg_match('/^\d{6}$/', $code)) reply(['message' => 'Enter the 6-digit verification code from your email.'], 400);
-    if (strlen($newPassword) < 6) reply(['message' => 'The new password must be at least 6 characters.'], 400);
-
-    $statement = $db->prepare('SELECT id, user_id FROM password_reset_tokens WHERE email = ? AND token_hash = ? AND expires_at >= ? LIMIT 1');
-    $statement->execute([$email, hash('sha256', $code), time()]);
-    $token = $statement->fetch();
-    if (!$token) reply(['message' => 'That verification code is invalid or expired.'], 400);
-    $db->prepare('UPDATE users SET password_hash = ? WHERE id = ?')->execute([password_hash($newPassword, PASSWORD_DEFAULT), (int) $token['user_id']]);
-    $db->prepare('DELETE FROM password_reset_tokens WHERE user_id = ?')->execute([(int) $token['user_id']]);
-    reply(['message' => 'Password changed successfully. You can now log in.']);
+    $statement = $db->prepare('INSERT INTO attendance (student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
+    $statement->execute([$student['student_id'], $student['full_name'], $student['course'], $attendanceDate, $subject, $timeIn, $timeOut, $status, $student['school_year']]);
+    audit($db, 'Device recorded ' . $status . ' attendance for ' . $studentId);
+    reply(['message' => 'Attendance recorded.', 'studentId' => $studentId, 'studentName' => $student['full_name'], 'parentPhone' => $student['parent_phone'], 'date' => $attendanceDate]);
 }
 
 if ($method === 'POST' && $action === 'device-attendance') {
@@ -235,7 +286,8 @@ if ($method === 'POST' && $action === 'password') {
 }
 
 if ($method === 'GET' && $action === 'dashboard') {
-    $students = $db->query('SELECT student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
+    markCompletedSchedulesAbsent($db);
+    $students = $db->query('SELECT id, student_id, full_name, course, year, school_year, status, parent_phone, is_archived, archived_school_year, face_image_path FROM students ORDER BY full_name COLLATE NOCASE')->fetchAll();
     $schedules = $db->query('SELECT id, subject, instructor, room, day, start_time, end_time, school_year, is_archived, archived_school_year FROM schedules ORDER BY day, start_time')->fetchAll();
     $attendance = $db->query('SELECT student_id, student_name, course, attendance_date, subject, time_in, time_out, status, school_year, is_archived, archived_school_year FROM attendance ORDER BY id')->fetchAll();
     $audit = $db->query('SELECT action, actor, created_at FROM audit_logs ORDER BY id DESC LIMIT 20')->fetchAll();
@@ -247,6 +299,8 @@ if ($method === 'GET' && $action === 'dashboard') {
 
 if ($method === 'POST' && $action === 'student') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
+    $studentId = trim((string) ($payload['studentId'] ?? ''));
+    $existingId = trim((string) ($payload['id'] ?? ''));
     $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
     if (!preg_match('/^\d{4}-\d{4}$/', $schoolYear) || (int) substr($schoolYear, 5) !== (int) substr($schoolYear, 0, 4) + 1) reply(['message' => 'Please provide a valid school year, such as 2026-2027.'], 400);
     $parentPhone = trim((string) ($payload['parentPhone'] ?? ''));
@@ -259,27 +313,53 @@ if ($method === 'POST' && $action === 'student') {
     } else {
         $parentPhone = '+' . $phoneDigits;
     }
-    $facePhoto = (string) ($payload['facePhoto'] ?? '');
-    if (!preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $facePhoto, $matches)) reply(['message' => 'Please provide a valid face photo.'], 400);
-    $imageData = base64_decode($matches[2], true);
-    if ($imageData === false || strlen($imageData) > 5 * 1024 * 1024) reply(['message' => 'The face photo must be 5 MB or smaller.'], 400);
-    $imageInfo = @getimagesizefromstring($imageData);
-    if (!$imageInfo || !in_array($imageInfo['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) reply(['message' => 'The face photo is not a supported image.'], 400);
     $imageDirectory = __DIR__ . DIRECTORY_SEPARATOR . 'face_images';
     if (!is_dir($imageDirectory) && !mkdir($imageDirectory, 0755, true)) reply(['message' => 'Unable to create the face photo folder.'], 500);
-    $extension = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
-    $imageName = hash('sha256', (string) ($payload['studentId'] ?? '')) . '.' . $extension;
-    $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . $imageName;
-    if (file_put_contents($imagePath, $imageData) === false) reply(['message' => 'Unable to save the face photo.'], 500);
-    $relativeImagePath = 'face_images/' . $imageName;
+    $relativeImagePath = null;
+    $facePhoto = (string) ($payload['facePhoto'] ?? '');
+    if ($facePhoto !== '') {
+        if (!preg_match('/^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+\/=]+)$/', $facePhoto, $matches)) reply(['message' => 'Please provide a valid face photo.'], 400);
+        $imageData = base64_decode($matches[2], true);
+        if ($imageData === false || strlen($imageData) > 5 * 1024 * 1024) reply(['message' => 'The face photo must be 5 MB or smaller.'], 400);
+        $imageInfo = @getimagesizefromstring($imageData);
+        if (!$imageInfo || !in_array($imageInfo['mime'], ['image/jpeg', 'image/png', 'image/webp'], true)) reply(['message' => 'The face photo is not a supported image.'], 400);
+        $extension = $matches[1] === 'jpeg' ? 'jpg' : $matches[1];
+        $imageName = hash('sha256', $studentId) . '.' . $extension;
+        $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . $imageName;
+        if (file_put_contents($imagePath, $imageData) === false) reply(['message' => 'Unable to save the face photo.'], 500);
+        $relativeImagePath = 'face_images/' . $imageName;
+    }
+
+    if ($existingId !== '') {
+        $existingStudent = $db->prepare('SELECT student_id, face_image_path FROM students WHERE id = ? LIMIT 1');
+        $existingStudent->execute([$existingId]);
+        $existingRecord = $existingStudent->fetch();
+        if (!$existingRecord) reply(['message' => 'Student not found.'], 404);
+        $newStudentId = $studentId !== '' ? $studentId : (string) $existingRecord['student_id'];
+        $fields = 'student_id = ?, full_name = ?, course = ?, year = ?, school_year = ?, status = ?, parent_phone = ?';
+        $parameters = [$newStudentId, $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone];
+        if ($relativeImagePath !== null) {
+            $fields .= ', face_image_path = ?';
+            $parameters[] = $relativeImagePath;
+        }
+        $parameters[] = $existingId;
+        $statement = $db->prepare('UPDATE students SET ' . $fields . ' WHERE id = ?');
+        $statement->execute($parameters);
+        audit($db, 'Updated student ' . $newStudentId);
+        reply(['message' => 'Student updated.']);
+    }
+
     $statement = $db->prepare('INSERT INTO students (student_id, full_name, course, year, school_year, status, parent_phone, face_image_path) VALUES (?, ?, ?, ?, ?, ?, ?, ?)');
     try {
-        $statement->execute([$payload['studentId'], $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone, $relativeImagePath]);
+        $statement->execute([$studentId, $payload['fullName'], $payload['course'], $payload['year'], $schoolYear, $payload['status'], $parentPhone, $relativeImagePath ?? '']);
     } catch (PDOException $error) {
-        @unlink($imagePath);
+        if ($relativeImagePath !== null) {
+            $imagePath = $imageDirectory . DIRECTORY_SEPARATOR . basename($relativeImagePath);
+            @unlink($imagePath);
+        }
         throw $error;
     }
-    audit($db, 'Added student ' . $payload['studentId']);
+    audit($db, 'Added student ' . $studentId);
     reply(['message' => 'Student added.']);
 }
 
@@ -295,15 +375,30 @@ if ($method === 'POST' && $action === 'archive-student') {
 if ($method === 'POST' && $action === 'archive-year') {
     if ((user()['role'] ?? '') !== 'Administrator') reply(['message' => 'Administrator permission required.'], 403);
     $schoolYear = trim((string) ($payload['schoolYear'] ?? ''));
+    $course = trim((string) ($payload['course'] ?? ''));
     if ($schoolYear === '') reply(['message' => 'A school year is required.'], 400);
-    $statement = $db->prepare('UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
-    $statement->execute([$schoolYear, $schoolYear]);
-    $attendanceStatement = $db->prepare('UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE is_archived = 0 AND student_id IN (SELECT student_id FROM students WHERE archived_school_year = ?)');
-    $attendanceStatement->execute([$schoolYear, $schoolYear, $schoolYear]);
-    $scheduleStatement = $db->prepare('UPDATE schedules SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?');
-    $scheduleStatement->execute([$schoolYear, $schoolYear]);
-    audit($db, 'Archived students for school year ' . $schoolYear);
-    reply(['message' => 'Students archived for ' . $schoolYear . '.']);
+    $studentQuery = 'UPDATE students SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?';
+    $studentParameters = [$schoolYear, $schoolYear];
+    if ($course !== '') {
+        $studentQuery .= ' AND course = ?';
+        $studentParameters[] = $course;
+    }
+    $db->prepare($studentQuery)->execute($studentParameters);
+
+    $attendanceQuery = 'UPDATE attendance SET is_archived = 1, school_year = ?, archived_school_year = ? WHERE is_archived = 0 AND student_id IN (SELECT student_id FROM students WHERE school_year = ?';
+    $attendanceParameters = [$schoolYear, $schoolYear, $schoolYear];
+    if ($course !== '') {
+        $attendanceQuery .= ' AND course = ?';
+        $attendanceParameters[] = $course;
+    }
+    $attendanceQuery .= ')';
+    $db->prepare($attendanceQuery)->execute($attendanceParameters);
+
+    if ($course === '') {
+        $db->prepare('UPDATE schedules SET is_archived = 1, archived_school_year = ? WHERE is_archived = 0 AND school_year = ?')->execute([$schoolYear, $schoolYear]);
+    }
+    audit($db, 'Archived ' . ($course !== '' ? $course . ' students for ' : 'students for ') . $schoolYear);
+    reply(['message' => 'Selected records archived for ' . $schoolYear . ($course !== '' ? ' (' . $course . ')' : '') . '.']);
 }
 
 if ($method === 'POST' && $action === 'archive-attendance-date') {
@@ -368,6 +463,7 @@ if ($method === 'POST' && $action === 'settings') {
 }
 
 reply(['message' => 'Unknown action.'], 404);
+<<<<<<< HEAD
 /*
 <?php
 declare(strict_types=1);
@@ -633,3 +729,5 @@ if ($method === 'POST' && $action === 'settings') {
 
 reply(['message' => 'Unknown action.'], 404);
 */
+=======
+>>>>>>> 452837e40e69c0aad43c66728ffc24ff0320a5ec
