@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 DRLCEFI Attendance - Local Deployment
 
 For the non-technical user:
@@ -33,7 +32,6 @@ Password reset email setup:
 4. Restart the app with `Start Attendance.vbs` and test Forgot password.
 
 Keep `mail-config.php` private. It contains the email account credentials used to send verification codes.
-=======
 DRLCEFI Attendance - Local Deployment
 
 For the non-technical user:
@@ -63,4 +61,3 @@ If port 8080 is already in use, close the other local app using that port before
 Raspberry Pi hardware setup
 
 The Raspberry Pi integration files are in the raspberry_pi folder. Read raspberry_pi\README.md for camera enrollment, LAN configuration, the protected device-attendance API, and optional SIM7600 SMS setup. Create device_config.php from device_config.example.php before connecting a Pi.
->>>>>>> 134244567deebd761d16245076316146e50f51df

@@ -176,6 +176,8 @@ function showResetForm() {
     document.getElementById('authTitle').textContent = 'Reset your password';
     document.getElementById('authSubtitle').textContent = 'We will send a verification code to your email.';
     document.getElementById('resetEmail').value = document.getElementById('loginEmail').value;
+    document.getElementById('resetEmail').readOnly = false;
+    document.getElementById('resetEmail').required = true;
     document.getElementById('resetVerificationFields').hidden = true;
     document.getElementById('resetCode').required = false;
     document.getElementById('resetNewPassword').required = false;
@@ -310,6 +312,7 @@ async function initializeAuth() {
         closeAccountMenu();
         openSettings();
     });
+
 }
 
 initializeAuth().catch(function () {
